@@ -9,19 +9,21 @@ Unified turtle controller with two selectable modes:
                           velocity profile for straight-line motion.
 
   mode = 'pid'        →  PID position controller that drives the turtle
-                          to (goal_x, goal_y) using two independent PID
-                          loops (linear distance + angular heading).
+                          to a goal position received via the topic
+                          /goal_position (geometry_msgs/Point).
+                          Publish a new point at any time to update the goal.
 
-Select the mode via the ROS2 parameter 'mode', or from the launch file:
-
-  ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py mode:=pid goal_x:=12.0 goal_y:=10.0
+  ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py mode:=pid
   ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py mode:=trapezoid distance:=6.0
+
+  # Send a goal manually:
+  ros2 topic pub /goal_position geometry_msgs/Point "{x: 10.0, y: 7.5, z: 0.0}"
 """
 
 import math
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, Point
 from turtlesim.msg import Pose
 
 
@@ -80,8 +82,6 @@ class TurtleController(Node):
         self.declare_parameter('distance', 5.0)   # m
 
         # ── PID parameters ───────────────────────────────────────────────
-        self.declare_parameter('goal_x',         10.0)
-        self.declare_parameter('goal_y',          7.5)
         self.declare_parameter('goal_tolerance',  0.05)   # m
         self.declare_parameter('v_max_pid',       2.0)    # m/s  linear clamp
         self.declare_parameter('w_max_pid',       3.0)    # rad/s angular clamp
@@ -173,8 +173,8 @@ class TurtleController(Node):
 
     # ── PID init ──────────────────────────────────────────────────────────
     def _init_pid(self):
-        self.goal_x         = float(self.get_parameter('goal_x').value)
-        self.goal_y         = float(self.get_parameter('goal_y').value)
+        self.goal_x: float | None = None   # set by /goal_position topic
+        self.goal_y: float | None = None
         self.goal_tolerance = float(self.get_parameter('goal_tolerance').value)
         v_lim = float(self.get_parameter('v_max_pid').value)
         w_lim = float(self.get_parameter('w_max_pid').value)
@@ -196,10 +196,13 @@ class TurtleController(Node):
         self.create_subscription(
             Pose, f'{self.turtle_name}/pose', self._pose_cb, 10
         )
+        self.create_subscription(
+            Point, 'goal_position', self._goal_cb, 10
+        )
 
         self.get_logger().info(
             f'\n  [pid]\n'
-            f'  goal            = ({self.goal_x:.2f}, {self.goal_y:.2f}) m\n'
+            f'  goal            = waiting for /goal_position topic\n'
             f'  tolerance       = {self.goal_tolerance:.3f} m\n'
             f'  linear  PID     : Kp={self.pid_linear.kp}  '
             f'Ki={self.pid_linear.ki}  Kd={self.pid_linear.kd}\n'
@@ -209,6 +212,16 @@ class TurtleController(Node):
 
     def _pose_cb(self, msg: Pose):
         self._current_pose = msg
+
+    def _goal_cb(self, msg: Point):
+        self.goal_x = msg.x
+        self.goal_y = msg.y
+        self.pid_linear.reset()
+        self.pid_angular.reset()
+        self._phase = self._ACTIVE
+        self.get_logger().info(
+            f'[PID] New goal received: ({self.goal_x:.3f}, {self.goal_y:.3f}) m'
+        )
 
     # ── timer callback ────────────────────────────────────────────────────
     def _timer_cb(self):
@@ -253,7 +266,7 @@ class TurtleController(Node):
 
     # ── PID step ──────────────────────────────────────────────────────────
     def _step_pid(self):
-        if self._current_pose is None:
+        if self._current_pose is None or self.goal_x is None or self.goal_y is None:
             return
 
         pose = self._current_pose
@@ -265,10 +278,9 @@ class TurtleController(Node):
         if dist < self.goal_tolerance:
             self._publish(0.0, 0.0)
             self._phase = self._DONE
-            self._timer.cancel()
             self.get_logger().info(
                 f'[PID] Goal reached!  pos=({pose.x:.3f}, {pose.y:.3f})  '
-                f'error={dist:.4f} m'
+                f'error={dist:.4f} m  — waiting for next /goal_position'
             )
             return
 

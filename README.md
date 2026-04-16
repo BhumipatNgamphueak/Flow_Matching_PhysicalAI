@@ -23,8 +23,9 @@ source install/setup.bash
 # default (trapezoidal velocity)
 ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py
 
-# PID position control
-ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py mode:=pid goal_x:=12.0 goal_y:=10.0
+# PID position control — then send a goal
+ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py mode:=pid
+ros2 topic pub /goal_position geometry_msgs/Point "{x: 12.0, y: 10.0, z: 0.0}"
 ```
 
 ---
@@ -117,17 +118,38 @@ If `distance` is too short to reach `v_max`, it automatically falls back to a tr
 
 ### Mode 2 — Position control (PID)
 
-The turtle drives to a goal position `(goal_x, goal_y)` using two PID loops.  
-Pose feedback comes from `/turtle1/pose`.
+The turtle drives to a goal position received on `/goal_position` using two PID loops.  
+Pose feedback comes from `/turtle1/pose`.  
+Publish a new goal at any time to immediately retarget the turtle.
 
 ```bash
+# 1. Start the controller
 ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py mode:=pid
+
+# 2. Send a goal (turtle moves immediately)
+ros2 topic pub /goal_position geometry_msgs/Point "{x: 10.0, y: 7.5, z: 0.0}"
+
+# 3. Send another goal after the first is reached (or at any time)
+ros2 topic pub /goal_position geometry_msgs/Point "{x: 3.0, y: 12.0, z: 0.0}"
 ```
+
+#### Goal topic
+
+```
+Topic : /goal_position
+Type  : geometry_msgs/Point
+
+Point.x  # target X  (m)
+Point.y  # target Y  (m)
+Point.z  # unused
+```
+
+Each message resets both PID integrators and immediately begins driving to the new goal.
+
+#### Launch parameters
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `goal_x` | `10.0` m | Target X position |
-| `goal_y` | `7.5` m | Target Y position |
 | `goal_tolerance` | `0.05` m | Distance at which the turtle stops |
 | `kp_linear` | `1.5` | Linear PID — proportional gain |
 | `ki_linear` | `0.0` | Linear PID — integral gain |
@@ -139,15 +161,15 @@ ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py mode:=pid
 | `w_max_pid` | `3.0` rad/s | Max angular speed |
 
 ```bash
-# Example — drive to (12, 10) with stronger angular correction
+# Example — stronger angular correction
 ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py \
-    mode:=pid goal_x:=12.0 goal_y:=10.0 kp_angular:=6.0
+    mode:=pid kp_angular:=6.0
 ```
 
 **Control diagram:**
 ```
-/turtle1/pose ──► [ error compute ] ──► [ PID linear  ] ──► linear.x  ──► /turtle1/cmd_vel
-                                    └──► [ PID angular ] ──► angular.z ──►
+/goal_position ──► [ error compute ] ──► [ PID linear  ] ──► linear.x  ──► /turtle1/cmd_vel
+/turtle1/pose  ──►                   └──► [ PID angular ] ──► angular.z ──►
 ```
 
 ---
@@ -163,6 +185,7 @@ Plot saved to `~/turtle_trajectory.png` on Ctrl-C.
 ## Other Useful Topics & Services
 
 ```
+/goal_position     geometry_msgs/Point — PID mode: set target (x, y) for the turtle
 /spawn_turtle      turtlesim/Spawn     — spawn extra turtle at (x, y, θ)
 /remove_turtle     turtlesim/Kill      — remove turtle by name
 /spawn_pizza       GivePosition        — place a pizza at (x, y)
@@ -179,5 +202,5 @@ Plot saved to `~/turtle_trajectory.png` on Ctrl-C.
 | `executable not found` | `chmod +x scripts/your_node.py` |
 | Build fails (symlink error) | `rm -rf build/ install/ log/` then rebuild |
 | Turtle doesn't move | `start_delay` defaults to 2 s — wait for it |
-| Turtle hits wall | World is 0–15 m; check your goal / distance values |
+| Turtle hits wall | World is 0–15 m; keep `/goal_position` x,y in range 0–15 |
 | Blank matplotlib window | `sudo apt install python3-pyqt5`, change backend to `Qt5Agg` |
