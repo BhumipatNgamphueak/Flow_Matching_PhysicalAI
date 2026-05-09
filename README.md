@@ -204,3 +204,4 @@ Plot saved to `~/turtle_trajectory.png` on Ctrl-C.
 | Turtle doesn't move | `start_delay` defaults to 2 s — wait for it |
 | Turtle hits wall | World is 0–15 m; keep `/goal_position` x,y in range 0–15 |
 | Blank matplotlib window | `sudo apt install python3-pyqt5`, change backend to `Qt5Agg` |
+hole 
