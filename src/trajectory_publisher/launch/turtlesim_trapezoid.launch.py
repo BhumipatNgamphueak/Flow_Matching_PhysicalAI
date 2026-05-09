@@ -1,45 +1,32 @@
 """
 turtlesim_trapezoid.launch.py
 ------------------------------
-Launches turtlesim_plus + turtle_controller + turtle_plotter.
+Launches turtlesim_plus + turtle_controller + turtle_plotter + llm_node
+(LLM planner that publishes constraints on /traj_context).
 
 Select the controller mode with  mode:=trapezoid  or  mode:=pid.
+Disable the LLM node with  use_llm:=false  if you only want manual /goal_position.
 
-── Trapezoid mode examples ────────────────────────────────────────────────────
-  ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py
-  ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py v_max:=3.0 distance:=8.0
+── Trapezoid mode (classical trapezoidal velocity profile) ──────────────
+  ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py mode:=trapezoid
 
-── PID mode examples ──────────────────────────────────────────────────────────
+── PID/CFM mode (flow matching trajectory + PID tracker) ────────────────
   ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py mode:=pid
-  ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py mode:=pid goal_x:=12.0 goal_y:=10.0
 
-── All launch arguments ───────────────────────────────────────────────────────
-  Common
-    mode          'trapezoid' | 'pid'       default: trapezoid
-    turtle_name   name of the turtle        default: turtle1
-    start_delay   seconds before moving     default: 2.0
+── Issue an LLM prompt at runtime ───────────────────────────────────────
+  ros2 service call /LlmPrompt llm_pack_interface/srv/String \\
+      "{prompt: 'go to x=2.0, y=1.5 with v=0.15 and a=0.03'}"
 
-  Trapezoid-only
-    v_max         max linear velocity m/s   default: 2.0
-    a_max         max acceleration  m/s²    default: 0.5
-    distance      travel distance m         default: 5.0
-
-  PID-only
-    goal_x        target X position m       default: 10.0
-    goal_y        target Y position m       default: 7.5
-    goal_tolerance  stop radius m           default: 0.05
-    kp_linear     PID linear  Kp            default: 1.5
-    ki_linear     PID linear  Ki            default: 0.0
-    kd_linear     PID linear  Kd            default: 0.05
-    kp_angular    PID angular Kp            default: 5.0
-    ki_angular    PID angular Ki            default: 0.0
-    kd_angular    PID angular Kd            default: 0.1
-    v_max_pid     linear  velocity clamp    default: 2.0
-    w_max_pid     angular velocity clamp    default: 3.0
+── Required env var (LLM only) ──────────────────────────────────────────
+  export GOOGLE_API_KEY=...
+  ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py mode:=pid
 """
 
+import os
+
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, TimerAction
+from launch.actions import DeclareLaunchArgument, TimerAction, GroupAction
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -55,20 +42,22 @@ def generate_launch_description():
                               description='Name of the turtle to control'),
         DeclareLaunchArgument('start_delay',   default_value='2.0',
                               description='Seconds to wait before moving'),
+        DeclareLaunchArgument('use_llm',       default_value='true',
+                              description='Launch the LLM planner node (requires GOOGLE_API_KEY)'),
 
-        # trapezoid
+        # trapezoid (fallback if no /traj_context)
         DeclareLaunchArgument('v_max',         default_value='2.0',
-                              description='[trapezoid] Max linear velocity (m/s)'),
+                              description='[trapezoid] Fallback max linear velocity (m/s)'),
         DeclareLaunchArgument('a_max',         default_value='0.5',
-                              description='[trapezoid] Max acceleration (m/s²)'),
+                              description='[trapezoid] Fallback max acceleration (m/s²)'),
         DeclareLaunchArgument('distance',      default_value='5.0',
-                              description='[trapezoid] Travel distance (m)'),
+                              description='[trapezoid] Fallback travel distance (m)'),
 
-        # PID
+        # PID (fallback goal if no /traj_context, plus PID gains)
         DeclareLaunchArgument('goal_x',        default_value='10.0',
-                              description='[pid] Target X position (m)'),
+                              description='[pid] Fallback target X (m, world)'),
         DeclareLaunchArgument('goal_y',        default_value='7.5',
-                              description='[pid] Target Y position (m)'),
+                              description='[pid] Fallback target Y (m, world)'),
         DeclareLaunchArgument('goal_tolerance',default_value='0.05',
                               description='[pid] Arrival tolerance (m)'),
         DeclareLaunchArgument('kp_linear',     default_value='1.5',
@@ -83,8 +72,8 @@ def generate_launch_description():
                               description='[pid] Angular PID Ki'),
         DeclareLaunchArgument('kd_angular',    default_value='0.1',
                               description='[pid] Angular PID Kd'),
-        DeclareLaunchArgument('v_max_pid',     default_value='2.0',
-                              description='[pid] Linear velocity clamp (m/s)'),
+        DeclareLaunchArgument('v_max_pid',     default_value='0.20',
+                              description='[pid] Linear velocity clamp (m/s) — match CFM training range [0.10, 0.20]'),
         DeclareLaunchArgument('w_max_pid',     default_value='3.0',
                               description='[pid] Angular velocity clamp (rad/s)'),
     ]
@@ -107,7 +96,7 @@ def generate_launch_description():
             'mode':           LaunchConfiguration('mode'),
             'turtle_name':    LaunchConfiguration('turtle_name'),
             'start_delay':    LaunchConfiguration('start_delay'),
-            # trapezoid
+            # trapezoid fallbacks
             'v_max':          LaunchConfiguration('v_max'),
             'a_max':          LaunchConfiguration('a_max'),
             'distance':       LaunchConfiguration('distance'),
@@ -137,10 +126,29 @@ def generate_launch_description():
         }],
     )
 
+    # ── LLM planner node (Gemini via GOOGLE_API_KEY) ──────────────────────
+    # Inherits GOOGLE_API_KEY from the launching shell.
+    llm_node = Node(
+        package='llm_pack',
+        executable='llm_node.py',
+        name='llm_node',
+        output='screen',
+        additional_env={
+            'GOOGLE_API_KEY': os.environ.get('GOOGLE_API_KEY', ''),
+        },
+        condition=IfCondition(LaunchConfiguration('use_llm')),
+    )
+
     # Delay controller + plotter so simulator's turtle1 topics are ready
-    delayed_nodes = TimerAction(
+    delayed_local_nodes = TimerAction(
         period=1.5,
         actions=[controller_node, plotter_node],
     )
 
-    return LaunchDescription(args + [turtlesim_node, delayed_nodes])
+    # Delay LLM node a bit longer so the /traj_context subscriber is up first
+    delayed_llm = TimerAction(
+        period=3.0,
+        actions=[llm_node],
+    )
+
+    return LaunchDescription(args + [turtlesim_node, delayed_local_nodes, delayed_llm])

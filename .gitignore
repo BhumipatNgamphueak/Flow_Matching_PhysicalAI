@@ -2,3 +2,20 @@
 /build
 /install
 /log
+
+# Secrets — never commit
+.env
+.env.*
+*.key
+secrets/
+
+# Tooling state
+.claude/
+
+# Local logs from comparison runs
+comparison_logs/
+
+# Python build artifacts
+__pycache__/
+*.egg-info/
+*.pyc
