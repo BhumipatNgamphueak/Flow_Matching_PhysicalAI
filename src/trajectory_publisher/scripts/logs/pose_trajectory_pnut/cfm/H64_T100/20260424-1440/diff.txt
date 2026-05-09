@@ -1,0 +1,1428 @@
+diff --git a/README.md b/README.md
+index 2b22cee..fb77205 100644
+--- a/README.md
++++ b/README.md
+@@ -45,7 +45,9 @@ Each sample has 14 context features describing the trajectory's physical constra
+ | 2 | `s_goal_z` | 0 (constant) | Goal position z (unused, 2D dataset) |
+ | 3 | `v_const` | [0.10, 0.20] | Constant velocity magnitude |
+ | 4 | `accel` | [0.02, 0.04] | Acceleration magnitude |
+-| 5 | `q_init_x` | [-4.91, 4.99] | Initial position x |
++| 5 | `qdot_init_x` | [-0.2, 0.2] | Initial velocity x |
++| 6 | `qdot_init_y` | [-0.2, 0.2] | Initial velocity y |
++| 7 | `q_init_x` | [-4.91, 4.99] | Initial position x |
+ | 6 | `q_init_y` | [-4.99, 4.92] | Initial position y |
+ | 7 | `q_init_z` | 0 (constant) | Initial position z (unused) |
+ | 8 | `q_init_quatw` | [0.0004, 1.0] | Initial orientation quaternion w |
+@@ -55,13 +57,13 @@ Each sample has 14 context features describing the trajectory's physical constra
+ | 12 | `t_init` | [0.0001, 53.5] | Initial time within the full motion |
+ | 13 | `part_enum` | {0, 1, 2} | Motion phase (see below) |
+ 
+-### Motion Phase (`part_enum`)
++<!-- ### Motion Phase (`part_enum`)
+ 
+ | Value | Phase | Count | Percentage |
+ |-------|-------|-------|------------|
+ | 0 | Acceleration | 19,993 | 20.0% |
+ | 1 | Constant velocity | 60,126 | 60.1% |
+-| 2 | Deceleration | 19,881 | 19.9% |
++| 2 | Deceleration | 19,881 | 19.9% | -->
+ 
+ ## Targets (Trajectories) — `targets` array
+ 
+@@ -85,15 +87,13 @@ The training script (`scripts/train.py`) processes this dataset into two tensors
+ 
+ ### Context Vector C (model conditioning)
+ ```
+-Shape: (N, 9)
+-Columns: [s_goal_x, s_goal_y, v_const, accel, part_0, part_1, part_2, q_init_x, q_init_y]
+-                                                ─────────────────────
+-                                                one-hot encoded from
+-                                                    part_enum
++Shape: (N, 8)
++Columns: [s_goal_x, s_goal_y, qdot_init_x, qdot_init_y, v_const, accel, q_init_x, q_init_y]
++
+ ```
+ 
+ Constructed by:
+-1. Selecting `s_goal_x`, `s_goal_y`, `v_const`, `accel` from features
++1. Selecting `s_goal_x`, `s_goal_y`,`qdot_init_x`, `qdot_init_y`, `v_const`, `accel` from features
+ 2. One-hot encoding `part_enum` into 3 binary columns
+ 3. Selecting `q_init_x`, `q_init_y` from features
+ 
+@@ -114,7 +114,7 @@ The model generates 2D pose trajectories conditioned on physical context using *
+ ### Inputs and Dimensions
+ 
+ ```
+-Context Vector C ─── (B, 9) ──── "What trajectory should look like"
++Context Vector C ─── (B, 8) ──── "What trajectory should look like"
+    [s_goal_x, s_goal_y, v_const, accel, part_0, part_1, part_2, q_init_x, q_init_y]
+     ────────────────  ──────────  ─────  ───────────────────────  ─────────────────
+       goal position   velocity    accel   one-hot motion phase     initial position
+@@ -139,11 +139,11 @@ Noisy Trajectory ─── (B, 64, 2) ── "Starting point: pure Gaussian nois
+ │                                                             │
+ │  Flow time t ──► SinusoidalPosEmb ──► MLP ──► (B, 32)     │
+ │                                                  │          │
+-│  Context C (B, 9) ───────────────────────────────┤          │
++│  Context C (B, 8) ───────────────────────────────┤          │
+ │                                              concat         │
+ │                                                  │          │
+ │                                           (B, 41) = global_feature
+-│                                           32 + 9 = 41      │
++│                                           32 + 8 = 41      │
+ └──────────────────────────┼──────────────────────────────────┘
+                            │
+                     ┌──────▼──────┐
+@@ -254,9 +254,9 @@ Generated Trajectory ─── (B, 50, 2)
+ | Component | Shape | Description |
+ |-----------|-------|-------------|
+ | Input noise | `(B, 64, 2)` | Random Gaussian, starting point for generation |
+-| Context C | `(B, 9)` | Physical constraints guiding generation |
++| Context C | `(B, 8)` | Physical constraints guiding generation |
+ | Flow time t | `(B,)` | Scalar in [0,1], sinusoidal embedding → 32-dim |
+-| Global feature | `(B, 41)` | Concatenation of time embedding (32) + context (9) |
++| Global feature | `(B, 41)` | Concatenation of time embedding (32) + context (8) |
+ | Model output | `(B, 64, 2)` | Predicted vector field (velocity in trajectory space) |
+ | Final output | `(B, 50, 2)` | Generated x,y trajectory (trimmed from 64) |
+ 
+diff --git a/config/__pycache__/cfm_pose.cpython-39.pyc b/config/__pycache__/cfm_pose.cpython-39.pyc
+index fbcfaf7..bf18e6e 100644
+Binary files a/config/__pycache__/cfm_pose.cpython-39.pyc and b/config/__pycache__/cfm_pose.cpython-39.pyc differ
+diff --git a/config/cfm_pose.py b/config/cfm_pose.py
+index 8c19dd1..7c22b73 100644
+--- a/config/cfm_pose.py
++++ b/config/cfm_pose.py
+@@ -15,7 +15,8 @@ base = {
+         'model': 'models.ConditionalUnet1D',
+         'diffusion': 'models.CFM',
+         'horizon': 64,
+-        'global_cond_dim': 9,
++        # 'global_cond_dim': 9,
++        'global_cond_dim': 8,
+         'n_diffusion_steps': 100,
+         'action_weight': 1,
+         'loss_weights': None,
+@@ -26,7 +27,7 @@ base = {
+         'use_wavelet': False,
+         'cont': None,
+         ## serialization
+-        'logbase': 'logs/pose_trajectory_athit',
++        'logbase': 'logs/pose_trajectory_pnut',
+         'prefix': 'cfm/',
+         'exp_name': watch(diffusion_args_to_watch),
+         ## training
+diff --git a/data/pose_traject_dataset_2000x50_0/feature_names.npy b/data/pose_traject_dataset_2000x50_0/feature_names.npy
+deleted file mode 100644
+index 10864dd..0000000
+Binary files a/data/pose_traject_dataset_2000x50_0/feature_names.npy and /dev/null differ
+diff --git a/data/pose_traject_dataset_2000x50_0/features.npy b/data/pose_traject_dataset_2000x50_0/features.npy
+deleted file mode 100644
+index b76bab2..0000000
+Binary files a/data/pose_traject_dataset_2000x50_0/features.npy and /dev/null differ
+diff --git a/data/pose_traject_dataset_2000x50_0/targets.npy b/data/pose_traject_dataset_2000x50_0/targets.npy
+deleted file mode 100644
+index ee49a48..0000000
+Binary files a/data/pose_traject_dataset_2000x50_0/targets.npy and /dev/null differ
+diff --git a/logs/pose_trajectory/cfm/H50_T100/20260403-1501/args.json b/logs/pose_trajectory/cfm/H50_T100/20260403-1501/args.json
+deleted file mode 100644
+index f299d08..0000000
+--- a/logs/pose_trajectory/cfm/H50_T100/20260403-1501/args.json
++++ /dev/null
+@@ -1,83 +0,0 @@
+-{
+-    "action_weight": 1,
+-    "add_extras": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMCHNldF9zZWVklGgCaAZoCIaUUpSMB2hvcml6b26USzKMC3VzZV93YXZlbGV0lImMDGxvc3Nfd2VpZ2h0c5ROjAZidWNrZXSUTowPZ2xvYmFsX2NvbmRfZGltlEsJjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3JlYWRfY29uZmlnlGgCaAZoEYaUUpSMDWNsaXBfZGVub2lzZWSUiIwJc2F2ZV9kaWZmlGgCaAZoFYaUUpSMC25fcmVmZXJlbmNllEsyjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMZSMCmFkZF9leHRyYXOUaAJoBmgchpRSlIwNbG9zc19kaXNjb3VudJRLAYwPcHJlZGljdF9lcHNpbG9ulImMDXNhdmVfcGFyYWxsZWyUiYwEY29udJROjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1uX3RyYWluX3N0ZXBzlEpADQMAjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwKZ2V0X2NvbW1pdJRoAmgGaCiGlFKUjAZjb25maWeUjA9jb25maWcuY2ZtX3Bvc2WUjAllbWFfZGVjYXmURz/v1wo9cKPXjAluX3NhbXBsZXOUSwqMBmRldmljZZSMBGN1ZGGUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMBnByZWZpeJSMBGNmbS+UjA1ldmFsX2ZzdHJpbmdzlGgCaAZoNYaUUpSMDWFjdGlvbl93ZWlnaHSUSwGMB2xvZ2Jhc2WUjBRsb2dzL3Bvc2VfdHJhamVjdG9yeZSMCGV4cF9uYW1llIwMY2ZtL0g1MF9UMTAwlIwJZGltX211bHRzlEsBSwRLCIeUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaECGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMB25fc2F2ZXOUSzKMC3NhbXBsZV9mcmVxlEsAjApiYXRjaF9zaXpllEsgjAlsb3NzX3R5cGWUjAJsMpSMCXNhdmVfZnJlcZRNiBOMBW1rZGlylGgCaAZoTIaUUpR1YmgchpRSlC4="
+-    },
+-    "batch_size": 32,
+-    "bucket": null,
+-    "clip_denoised": true,
+-    "commit": "0da647c415cd8bd67a3e13b76c9b5edb252bac4e base",
+-    "config": "config.cfm_pose",
+-    "cont": null,
+-    "dataset": "pose-trajectory",
+-    "device": "cuda",
+-    "diffusion": "models.CFM",
+-    "dim_mults": {
+-        "_type": "tuple",
+-        "_value": [
+-            1,
+-            4,
+-            8
+-        ]
+-    },
+-    "ema_decay": 0.995,
+-    "eval_fstrings": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMCHNldF9zZWVklGgCaAZoCIaUUpSMB2hvcml6b26USzKMC3VzZV93YXZlbGV0lImMDGxvc3Nfd2VpZ2h0c5ROjAZidWNrZXSUTowPZ2xvYmFsX2NvbmRfZGltlEsJjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3JlYWRfY29uZmlnlGgCaAZoEYaUUpSMDWNsaXBfZGVub2lzZWSUiIwJc2F2ZV9kaWZmlGgCaAZoFYaUUpSMC25fcmVmZXJlbmNllEsyjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMZSMCmFkZF9leHRyYXOUaAJoBmgchpRSlIwNbG9zc19kaXNjb3VudJRLAYwPcHJlZGljdF9lcHNpbG9ulImMDXNhdmVfcGFyYWxsZWyUiYwEY29udJROjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1uX3RyYWluX3N0ZXBzlEpADQMAjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwKZ2V0X2NvbW1pdJRoAmgGaCiGlFKUjAZjb25maWeUjA9jb25maWcuY2ZtX3Bvc2WUjAllbWFfZGVjYXmURz/v1wo9cKPXjAluX3NhbXBsZXOUSwqMBmRldmljZZSMBGN1ZGGUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMBnByZWZpeJSMBGNmbS+UjA1ldmFsX2ZzdHJpbmdzlGgCaAZoNYaUUpSMDWFjdGlvbl93ZWlnaHSUSwGMB2xvZ2Jhc2WUjBRsb2dzL3Bvc2VfdHJhamVjdG9yeZSMCGV4cF9uYW1llIwMY2ZtL0g1MF9UMTAwlIwJZGltX211bHRzlEsBSwRLCIeUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaECGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMB25fc2F2ZXOUSzKMC3NhbXBsZV9mcmVxlEsAjApiYXRjaF9zaXpllEsgjAlsb3NzX3R5cGWUjAJsMpSMCXNhdmVfZnJlcZRNiBOMBW1rZGlylGgCaAZoTIaUUpR1Ymg1hpRSlC4="
+-    },
+-    "exp_name": "cfm/H50_T100",
+-    "generate_exp_name": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMCHNldF9zZWVklGgCaAZoCIaUUpSMB2hvcml6b26USzKMC3VzZV93YXZlbGV0lImMDGxvc3Nfd2VpZ2h0c5ROjAZidWNrZXSUTowPZ2xvYmFsX2NvbmRfZGltlEsJjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3JlYWRfY29uZmlnlGgCaAZoEYaUUpSMDWNsaXBfZGVub2lzZWSUiIwJc2F2ZV9kaWZmlGgCaAZoFYaUUpSMC25fcmVmZXJlbmNllEsyjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMZSMCmFkZF9leHRyYXOUaAJoBmgchpRSlIwNbG9zc19kaXNjb3VudJRLAYwPcHJlZGljdF9lcHNpbG9ulImMDXNhdmVfcGFyYWxsZWyUiYwEY29udJROjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1uX3RyYWluX3N0ZXBzlEpADQMAjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwKZ2V0X2NvbW1pdJRoAmgGaCiGlFKUjAZjb25maWeUjA9jb25maWcuY2ZtX3Bvc2WUjAllbWFfZGVjYXmURz/v1wo9cKPXjAluX3NhbXBsZXOUSwqMBmRldmljZZSMBGN1ZGGUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMBnByZWZpeJSMBGNmbS+UjA1ldmFsX2ZzdHJpbmdzlGgCaAZoNYaUUpSMDWFjdGlvbl93ZWlnaHSUSwGMB2xvZ2Jhc2WUjBRsb2dzL3Bvc2VfdHJhamVjdG9yeZSMCGV4cF9uYW1llIwMY2ZtL0g1MF9UMTAwlIwJZGltX211bHRzlEsBSwRLCIeUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaECGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMB25fc2F2ZXOUSzKMC3NhbXBsZV9mcmVxlEsAjApiYXRjaF9zaXpllEsgjAlsb3NzX3R5cGWUjAJsMpSMCXNhdmVfZnJlcZRNiBOMBW1rZGlylGgCaAZoTIaUUpR1YmhAhpRSlC4="
+-    },
+-    "get_commit": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMCHNldF9zZWVklGgCaAZoCIaUUpSMB2hvcml6b26USzKMC3VzZV93YXZlbGV0lImMDGxvc3Nfd2VpZ2h0c5ROjAZidWNrZXSUTowPZ2xvYmFsX2NvbmRfZGltlEsJjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3JlYWRfY29uZmlnlGgCaAZoEYaUUpSMDWNsaXBfZGVub2lzZWSUiIwJc2F2ZV9kaWZmlGgCaAZoFYaUUpSMC25fcmVmZXJlbmNllEsyjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMZSMCmFkZF9leHRyYXOUaAJoBmgchpRSlIwNbG9zc19kaXNjb3VudJRLAYwPcHJlZGljdF9lcHNpbG9ulImMDXNhdmVfcGFyYWxsZWyUiYwEY29udJROjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1uX3RyYWluX3N0ZXBzlEpADQMAjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwKZ2V0X2NvbW1pdJRoAmgGaCiGlFKUjAZjb25maWeUjA9jb25maWcuY2ZtX3Bvc2WUjAllbWFfZGVjYXmURz/v1wo9cKPXjAluX3NhbXBsZXOUSwqMBmRldmljZZSMBGN1ZGGUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMBnByZWZpeJSMBGNmbS+UjA1ldmFsX2ZzdHJpbmdzlGgCaAZoNYaUUpSMDWFjdGlvbl93ZWlnaHSUSwGMB2xvZ2Jhc2WUjBRsb2dzL3Bvc2VfdHJhamVjdG9yeZSMCGV4cF9uYW1llIwMY2ZtL0g1MF9UMTAwlIwJZGltX211bHRzlEsBSwRLCIeUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaECGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMB25fc2F2ZXOUSzKMC3NhbXBsZV9mcmVxlEsAjApiYXRjaF9zaXpllEsgjAlsb3NzX3R5cGWUjAJsMpSMCXNhdmVfZnJlcZRNiBOMBW1rZGlylGgCaAZoTIaUUpR1YmgohpRSlC4="
+-    },
+-    "global_cond_dim": 9,
+-    "gradient_accumulate_every": 2,
+-    "horizon": 50,
+-    "learning_rate": 0.0002,
+-    "logbase": "logs/pose_trajectory",
+-    "loss_discount": 1,
+-    "loss_type": "l2",
+-    "loss_weights": null,
+-    "mkdir": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMCHNldF9zZWVklGgCaAZoCIaUUpSMB2hvcml6b26USzKMC3VzZV93YXZlbGV0lImMDGxvc3Nfd2VpZ2h0c5ROjAZidWNrZXSUTowPZ2xvYmFsX2NvbmRfZGltlEsJjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3JlYWRfY29uZmlnlGgCaAZoEYaUUpSMDWNsaXBfZGVub2lzZWSUiIwJc2F2ZV9kaWZmlGgCaAZoFYaUUpSMC25fcmVmZXJlbmNllEsyjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMZSMCmFkZF9leHRyYXOUaAJoBmgchpRSlIwNbG9zc19kaXNjb3VudJRLAYwPcHJlZGljdF9lcHNpbG9ulImMDXNhdmVfcGFyYWxsZWyUiYwEY29udJROjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1uX3RyYWluX3N0ZXBzlEpADQMAjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwKZ2V0X2NvbW1pdJRoAmgGaCiGlFKUjAZjb25maWeUjA9jb25maWcuY2ZtX3Bvc2WUjAllbWFfZGVjYXmURz/v1wo9cKPXjAluX3NhbXBsZXOUSwqMBmRldmljZZSMBGN1ZGGUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMBnByZWZpeJSMBGNmbS+UjA1ldmFsX2ZzdHJpbmdzlGgCaAZoNYaUUpSMDWFjdGlvbl93ZWlnaHSUSwGMB2xvZ2Jhc2WUjBRsb2dzL3Bvc2VfdHJhamVjdG9yeZSMCGV4cF9uYW1llIwMY2ZtL0g1MF9UMTAwlIwJZGltX211bHRzlEsBSwRLCIeUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaECGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMB25fc2F2ZXOUSzKMC3NhbXBsZV9mcmVxlEsAjApiYXRjaF9zaXpllEsgjAlsb3NzX3R5cGWUjAJsMpSMCXNhdmVfZnJlcZRNiBOMBW1rZGlylGgCaAZoTIaUUpR1YmhMhpRSlC4="
+-    },
+-    "model": "models.ConditionalUnet1D",
+-    "n_diffusion_steps": 100,
+-    "n_reference": 50,
+-    "n_samples": 10,
+-    "n_saves": 50,
+-    "n_steps_per_epoch": 10000,
+-    "n_train_steps": 200000,
+-    "predict_epsilon": false,
+-    "prefix": "cfm/",
+-    "read_config": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMCHNldF9zZWVklGgCaAZoCIaUUpSMB2hvcml6b26USzKMC3VzZV93YXZlbGV0lImMDGxvc3Nfd2VpZ2h0c5ROjAZidWNrZXSUTowPZ2xvYmFsX2NvbmRfZGltlEsJjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3JlYWRfY29uZmlnlGgCaAZoEYaUUpSMDWNsaXBfZGVub2lzZWSUiIwJc2F2ZV9kaWZmlGgCaAZoFYaUUpSMC25fcmVmZXJlbmNllEsyjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMZSMCmFkZF9leHRyYXOUaAJoBmgchpRSlIwNbG9zc19kaXNjb3VudJRLAYwPcHJlZGljdF9lcHNpbG9ulImMDXNhdmVfcGFyYWxsZWyUiYwEY29udJROjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1uX3RyYWluX3N0ZXBzlEpADQMAjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwKZ2V0X2NvbW1pdJRoAmgGaCiGlFKUjAZjb25maWeUjA9jb25maWcuY2ZtX3Bvc2WUjAllbWFfZGVjYXmURz/v1wo9cKPXjAluX3NhbXBsZXOUSwqMBmRldmljZZSMBGN1ZGGUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMBnByZWZpeJSMBGNmbS+UjA1ldmFsX2ZzdHJpbmdzlGgCaAZoNYaUUpSMDWFjdGlvbl93ZWlnaHSUSwGMB2xvZ2Jhc2WUjBRsb2dzL3Bvc2VfdHJhamVjdG9yeZSMCGV4cF9uYW1llIwMY2ZtL0g1MF9UMTAwlIwJZGltX211bHRzlEsBSwRLCIeUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaECGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMB25fc2F2ZXOUSzKMC3NhbXBsZV9mcmVxlEsAjApiYXRjaF9zaXpllEsgjAlsb3NzX3R5cGWUjAJsMpSMCXNhdmVfZnJlcZRNiBOMBW1rZGlylGgCaAZoTIaUUpR1YmgRhpRSlC4="
+-    },
+-    "reproducibility": {
+-        "command_line": "python scripts/train.py --config config.cfm_pose",
+-        "git_has_uncommitted_changes": true,
+-        "git_root": "/home/bubble/PhysicalAI_flowmatching",
+-        "git_url": "https://github.com/BoltonAthitDavies/PhysicalAI_flowmatching/tree/0da647c415cd8bd67a3e13b76c9b5edb252bac4e",
+-        "time": "Fri Apr  3 15:01:06 2026"
+-    },
+-    "sample_freq": 0,
+-    "save_diff": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMCHNldF9zZWVklGgCaAZoCIaUUpSMB2hvcml6b26USzKMC3VzZV93YXZlbGV0lImMDGxvc3Nfd2VpZ2h0c5ROjAZidWNrZXSUTowPZ2xvYmFsX2NvbmRfZGltlEsJjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3JlYWRfY29uZmlnlGgCaAZoEYaUUpSMDWNsaXBfZGVub2lzZWSUiIwJc2F2ZV9kaWZmlGgCaAZoFYaUUpSMC25fcmVmZXJlbmNllEsyjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMZSMCmFkZF9leHRyYXOUaAJoBmgchpRSlIwNbG9zc19kaXNjb3VudJRLAYwPcHJlZGljdF9lcHNpbG9ulImMDXNhdmVfcGFyYWxsZWyUiYwEY29udJROjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1uX3RyYWluX3N0ZXBzlEpADQMAjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwKZ2V0X2NvbW1pdJRoAmgGaCiGlFKUjAZjb25maWeUjA9jb25maWcuY2ZtX3Bvc2WUjAllbWFfZGVjYXmURz/v1wo9cKPXjAluX3NhbXBsZXOUSwqMBmRldmljZZSMBGN1ZGGUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMBnByZWZpeJSMBGNmbS+UjA1ldmFsX2ZzdHJpbmdzlGgCaAZoNYaUUpSMDWFjdGlvbl93ZWlnaHSUSwGMB2xvZ2Jhc2WUjBRsb2dzL3Bvc2VfdHJhamVjdG9yeZSMCGV4cF9uYW1llIwMY2ZtL0g1MF9UMTAwlIwJZGltX211bHRzlEsBSwRLCIeUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaECGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMB25fc2F2ZXOUSzKMC3NhbXBsZV9mcmVxlEsAjApiYXRjaF9zaXpllEsgjAlsb3NzX3R5cGWUjAJsMpSMCXNhdmVfZnJlcZRNiBOMBW1rZGlylGgCaAZoTIaUUpR1YmgVhpRSlC4="
+-    },
+-    "save_freq": 5000,
+-    "save_parallel": false,
+-    "savepath": "logs/pose_trajectory/cfm/H50_T100/20260403-1501",
+-    "set_seed": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMCHNldF9zZWVklGgCaAZoCIaUUpSMB2hvcml6b26USzKMC3VzZV93YXZlbGV0lImMDGxvc3Nfd2VpZ2h0c5ROjAZidWNrZXSUTowPZ2xvYmFsX2NvbmRfZGltlEsJjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3JlYWRfY29uZmlnlGgCaAZoEYaUUpSMDWNsaXBfZGVub2lzZWSUiIwJc2F2ZV9kaWZmlGgCaAZoFYaUUpSMC25fcmVmZXJlbmNllEsyjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMZSMCmFkZF9leHRyYXOUaAJoBmgchpRSlIwNbG9zc19kaXNjb3VudJRLAYwPcHJlZGljdF9lcHNpbG9ulImMDXNhdmVfcGFyYWxsZWyUiYwEY29udJROjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1uX3RyYWluX3N0ZXBzlEpADQMAjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwKZ2V0X2NvbW1pdJRoAmgGaCiGlFKUjAZjb25maWeUjA9jb25maWcuY2ZtX3Bvc2WUjAllbWFfZGVjYXmURz/v1wo9cKPXjAluX3NhbXBsZXOUSwqMBmRldmljZZSMBGN1ZGGUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMBnByZWZpeJSMBGNmbS+UjA1ldmFsX2ZzdHJpbmdzlGgCaAZoNYaUUpSMDWFjdGlvbl93ZWlnaHSUSwGMB2xvZ2Jhc2WUjBRsb2dzL3Bvc2VfdHJhamVjdG9yeZSMCGV4cF9uYW1llIwMY2ZtL0g1MF9UMTAwlIwJZGltX211bHRzlEsBSwRLCIeUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaECGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMB25fc2F2ZXOUSzKMC3NhbXBsZV9mcmVxlEsAjApiYXRjaF9zaXpllEsgjAlsb3NzX3R5cGWUjAJsMpSMCXNhdmVfZnJlcZRNiBOMBW1rZGlylGgCaAZoTIaUUpR1YmgIhpRSlC4="
+-    },
+-    "use_wavelet": false
+-}
+\ No newline at end of file
+diff --git a/logs/pose_trajectory/cfm/H50_T100/20260403-1501/diff.txt b/logs/pose_trajectory/cfm/H50_T100/20260403-1501/diff.txt
+deleted file mode 100644
+index a5e48d3..0000000
+--- a/logs/pose_trajectory/cfm/H50_T100/20260403-1501/diff.txt
++++ /dev/null
+@@ -1,276 +0,0 @@
+-diff --git a/diffuser/models/temporal_film.py b/diffuser/models/temporal_film.py
+-index ccef5f1..d75ac1d 100644
+---- a/diffuser/models/temporal_film.py
+-+++ b/diffuser/models/temporal_film.py
+-@@ -126,15 +126,18 @@ class ConditionalUnet1D(nn.Module):
+-         #     global_feature_cond_dim = lstm_out_dim + cond_dim
+-         # else:
+-         #     global_feature_cond_dim = cond_dim
+--        
+--        if encoder_type == 'lstm':
+--            self.film_encoder = EncoderRNN(input_dim=lstm_in_dim, hidden_dim = lstm_out_dim, num_layers = 1)
+--            self.film_encoder.flatten_parameters()
+-+
+-+        if lstm_out_dim is not None:
+-+            if encoder_type == 'lstm':
+-+                self.film_encoder = EncoderRNN(input_dim=lstm_in_dim, hidden_dim = lstm_out_dim, num_layers = 1)
+-+                self.film_encoder.flatten_parameters()
+-+            else:
+-+                self.film_encoder = nn.Sequential(
+-+                    nn.Linear(4, lstm_out_dim),
+-+                    nn.Mish(),
+-+                    nn.Linear(lstm_out_dim, lstm_out_dim))
+-         else:
+--            self.film_encoder = nn.Sequential(
+--                nn.Linear(4, lstm_out_dim),
+--                nn.Mish(),
+--                nn.Linear(lstm_out_dim, lstm_out_dim))
+-+            self.film_encoder = None
+- 
+- 
+-         in_out = list(zip(all_dims[:-1], all_dims[1:]))
+-@@ -248,15 +251,15 @@ class ConditionalUnet1D(nn.Module):
+-         global_feature = self.diffusion_step_encoder(timesteps)
+- 
+-         # print(global_cond)
+--        if global_cond is not None:               
+-+        if global_cond is not None:
+-             if 'hideouts' in global_cond.keys():
+-                 global_feature = torch.cat([global_cond['hideouts'], global_feature], axis=-1)
+- 
+--            if 'detections' in global_cond.keys():
+-+            if 'detections' in global_cond.keys() and self.film_encoder is not None:
+-                 detections_encoded = self.film_encoder(global_cond['detections'])
+-                 global_feature = torch.cat([detections_encoded, global_feature], axis=-1)
+- 
+--            if 'class' in global_cond.keys():
+-+            if 'class' in global_cond.keys() and self.film_encoder is not None:
+-                 encoded = self.film_encoder(global_cond['class'])
+-                 global_feature = torch.cat([encoded, global_feature], axis=-1)
+- 
+-diff --git a/scripts/train.py b/scripts/train.py
+-index 8ba52db..6226876 100644
+---- a/scripts/train.py
+-+++ b/scripts/train.py
+-@@ -1,17 +1,19 @@
+- import wandb
+-+from wandb.util import np
+- import diffuser.utils as utils
+- import pdb
+- import torch
+- from datetime import datetime
+- import os
+-+import numpy as np
+- 
+- #-----------------------------------------------------------------------------#
+- #----------------------------------- setup -----------------------------------#
+- #-----------------------------------------------------------------------------#
+- 
+- class Parser(utils.Parser):
+--    dataset: str = 'maze2d-large-v1'
+--    config: str = 'config.maze2d'
+-+    dataset: str = 'pose-trajectory'
+-+    config: str = 'config.cfm_pose'
+- 
+- args = Parser().parse_args('diffusion')
+- 
+-@@ -19,56 +21,112 @@ args = Parser().parse_args('diffusion')
+- #---------------------------------- dataset ----------------------------------#
+- #-----------------------------------------------------------------------------#
+- 
+--dataset_config = utils.Config(
+--    args.loader,
+--    savepath=(args.savepath, 'dataset_config.pkl'),
+--    folder_path=args.datapath,
+--    horizon=args.horizon,
+--    history_length=args.history_length,
+--    include_current=args.include_current,
+--    predict_features=args.predict_features,
+--    packed_features=args.packed_features,
+--    normalization=args.normalization
+--    )
+--
+--test_dataset_config = utils.Config(
+--    args.loader,
+--    savepath=(args.savepath, 'test_dataset_config.pkl'),
+--    folder_path=args.datapath,
+--    horizon=args.horizon,
+--    history_length=args.history_length,
+--    include_current=args.include_current,
+--    predict_features=args.predict_features,
+--    packed_features=args.packed_features,
+--    normalization=args.normalization
+--    )
+--
+--render_config = utils.Config(
+--    args.renderer,
+--    savepath=(args.savepath, 'render_config.pkl'),
+--    # env=args.dataset,
+--)
+-+import pandas as pd
+-+
+-+def load_npz_to_dataframe(filename: str, include_targets: bool = True):
+-+    ''' Reconstructs a DataFrame from a saved npz file '''
+-+    data = np.load(filename)
+-+    df = pd.DataFrame(data['features'], columns=data['feature_names'])
+-+    df['targets'] = [t for t in data['targets']]
+-+    
+-+    return df
+-+
+-+poseTraject_df = load_npz_to_dataframe("/home/bubble/PhysicalAI_flowmatching/data/pose_traject_dataset_2000x50_0.npz")
+-+
+-+# 1. One-hot encode : This creates the 3D one-hot vector part = {Accel, Const, Decel} [2]
+-+part_onehot = pd.get_dummies(poseTraject_df['part_enum'].astype(int), prefix='part').values
+-+
+-+# 2. Assemble the final Context Vector C (9 scalars total) [2]
+-+# C = [s_goal_x, s_goal_y, v_const, accel, part_0, part_1, part_2, q_init_x, q_init_y]
+-+C = np.concatenate([
+-+    poseTraject_df[['s_goal_x', 's_goal_y', 'v_const', 'accel']].values,
+-+    part_onehot,
+-+    poseTraject_df[['q_init_x', 'q_init_y']].values
+-+], axis=1)
+-+
+-+# 3. Process the Action Vector A (2D trajectories) [1]
+-+# The 'targets' column contains arrays of shape (50, 7) [5]
+-+# We stack them and keep only (x, y) which are indices 0 and 1 [6]
+-+targets_raw = np.stack(poseTraject_df['targets'].values) 
+-+A_2d = targets_raw[:, :, 0:2] # Shape: (batch_size, 50 steps, 2 variables)
+-+
+-+# 4. Prepare PyTorch Tensors for Flow Matching
+-+context_tensor = torch.tensor(C, dtype=torch.float32)  # (N, 9)
+-+
+-+# Trajectory as (N, 50, 2) for model: [horizon=50, transition_dim=2 (x,y)]
+-+A_for_model = torch.tensor(A_2d, dtype=torch.float32)  # (N, 50, 2)
+-+
+-+print(f"Context Vector C shape: {context_tensor.shape}")  # (N, 9)
+-+print(f"Action Vector A shape: {A_for_model.shape}")       # (N, 50, 2)
+- 
+--dataset = dataset_config()
+--test_dataset = test_dataset_config()
+--renderer = render_config()
+-+#-----------------------------------------------------------------------------#
+-+#------------------------------- dataset wrapper -----------------------------#
+-+#-----------------------------------------------------------------------------#
+- 
+--observation_dim = dataset.observation_dim
+-+from torch.utils.data import Dataset
+-+
+-+class PoseTrajectoryDataset(Dataset):
+-+    """Wraps pose trajectory data for T-CFM training."""
+-+    def __init__(self, actions, contexts):
+-+        self.actions = actions    # (N, 50, 2)
+-+        self.contexts = contexts  # (N, 9)
+-+        self.observation_dim = actions.shape[-1]  # 2
+-+        self.packed_dim = 0
+-+
+-+    def __len__(self):
+-+        return len(self.actions)
+-+
+-+    def __getitem__(self, idx):
+-+        action = self.actions[idx]       # (50, 2)
+-+        context = self.contexts[idx]     # (9,)
+-+        cond = (np.array([]), np.array([]))
+-+        return action, context, cond
+-+
+-+    def collate_fn(self, batch):
+-+        actions = torch.stack([b[0] for b in batch])
+-+        contexts = torch.stack([b[1] for b in batch])
+-+        conds = [b[2] for b in batch]
+-+        global_cond = {'hideouts': contexts}
+-+        return actions, global_cond, conds
+-+
+-+    def collate_fn_repeat(self, batch, num_samples):
+-+        actions = torch.stack([b[0] for b in batch]).repeat_interleave(num_samples, dim=0)
+-+        contexts = torch.stack([b[1] for b in batch]).repeat_interleave(num_samples, dim=0)
+-+        conds = [b[2] for b in batch for _ in range(num_samples)]
+-+        global_cond = {'hideouts': contexts}
+-+        return actions, global_cond, conds
+-+
+-+    def unnormalize(self, data):
+-+        return data  # No normalization applied for now
+-+
+-+# Train/test split (90/10)
+-+N = len(context_tensor)
+-+split = int(0.9 * N)
+-+indices = torch.randperm(N)
+-+train_idx, test_idx = indices[:split], indices[split:]
+-+
+-+dataset = PoseTrajectoryDataset(A_for_model[train_idx], context_tensor[train_idx])
+-+test_dataset = PoseTrajectoryDataset(A_for_model[test_idx], context_tensor[test_idx])
+-+
+-+observation_dim = 2   # x, y pose
+- action_dim = 0
+-+context_dim = context_tensor.shape[1]  # 9
+- 
+-+print(f"Train: {len(dataset)}, Test: {len(test_dataset)}")
+-+print(f"observation_dim={observation_dim}, context_dim={context_dim}")
+- 
+- #-----------------------------------------------------------------------------#
+- #------------------------------ model & trainer ------------------------------#
+- #-----------------------------------------------------------------------------#
+- 
+--print(args.global_cond_dim)
+- model_config = utils.Config(
+-     args.model,
+-     savepath=(args.savepath, 'model_config.pkl'),
+--    horizon=args.horizon,
+--    transition_dim=observation_dim + action_dim,
+--    lstm_in_dim=dataset.packed_dim,
+--    global_cond_dim = args.global_cond_dim,
+-+    horizon=50,                                   # 50 timesteps per trajectory
+-+    transition_dim=observation_dim + action_dim,   # 2 (x, y)
+-+    lstm_in_dim=None,                              # no sequential history encoder
+-+    lstm_out_dim=None,                             # no LSTM output
+-+    global_cond_dim=context_dim,                   # 9 (context vector C)
+-     cond_dim=observation_dim,
+-     dim_mults=args.dim_mults,
+-     device=args.device
+-@@ -77,7 +135,7 @@ model_config = utils.Config(
+- diffusion_config = utils.Config(
+-     args.diffusion,
+-     savepath=(args.savepath, 'diffusion_config.pkl'),
+--    horizon=args.horizon,
+-+    horizon=50,
+-     observation_dim=observation_dim,
+-     action_dim=action_dim,
+-     n_timesteps=args.n_diffusion_steps,
+-@@ -99,7 +157,7 @@ trainer_config = utils.Config(
+-     train_lr=args.learning_rate,
+-     gradient_accumulate_every=args.gradient_accumulate_every,
+-     ema_decay=args.ema_decay,
+--    sample_freq=args.sample_freq,
+-+    sample_freq=0,  # disable rendering (no renderer for this dataset)
+-     save_freq=args.save_freq,
+-     label_freq=int(args.n_train_steps // args.n_saves),
+-     save_parallel=args.save_parallel,
+-@@ -114,29 +172,14 @@ trainer_config = utils.Config(
+- #-----------------------------------------------------------------------------#
+- 
+- model = model_config()
+--
+--
+- diffusion = diffusion_config(model)
+-+trainer = trainer_config(diffusion, dataset, test_dataset, None)
+- 
+--trainer = trainer_config(diffusion, dataset, test_dataset, renderer)
+- if args.cont is not None:
+-     trainer.load_model(args.cont)
+- 
+--#-----------------------------------------------------------------------------#
+--#------------------------ test forward & backward pass -----------------------#
+--#-----------------------------------------------------------------------------#
+--
+- utils.report_parameters(model)
+- 
+--# print('Testing forward...', end=' ', flush=True)
+--# data, global_cond, conditions = dataset[0]
+--# data = torch.tensor(data, dtype=torch.float32).unsqueeze(0)
+--# global_cond = torch.tensor(global_cond, dtype=torch.float32).unsqueeze(0)
+--# loss, _ = diffusion.loss(data, global_cond, [conditions])
+--# loss.backward()
+--# print('✓')
+--
+--
+- #-----------------------------------------------------------------------------#
+- #--------------------------------- main loop ---------------------------------#
+- #-----------------------------------------------------------------------------#
+\ No newline at end of file
+diff --git a/logs/pose_trajectory/cfm/H50_T100/20260403-1502/args.json b/logs/pose_trajectory/cfm/H50_T100/20260403-1502/args.json
+deleted file mode 100644
+index 5209f1f..0000000
+--- a/logs/pose_trajectory/cfm/H50_T100/20260403-1502/args.json
++++ /dev/null
+@@ -1,83 +0,0 @@
+-{
+-    "action_weight": 1,
+-    "add_extras": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMDWNsaXBfZGVub2lzZWSUiIwRbl9zdGVwc19wZXJfZXBvY2iUTRAnjAZidWNrZXSUTowJbl9zYW1wbGVzlEsKjBFuX2RpZmZ1c2lvbl9zdGVwc5RLZIwNZXZhbF9mc3RyaW5nc5RoAmgGaA2GlFKUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwNbl90cmFpbl9zdGVwc5RKQA0DAIwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwIZXhwX25hbWWUjAxjZm0vSDUwX1QxMDCUjAlkaW1fbXVsdHOUSwFLBEsIh5SMBmRldmljZZSMBGN1ZGGUjAVta2RpcpRoAmgGaBuGlFKUjAhzZXRfc2VlZJRoAmgGaB6GlFKUjAduX3NhdmVzlEsyjAlzYXZlX2ZyZXGUTYgTjAt1c2Vfd2F2ZWxldJSJjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1zYXZlX3BhcmFsbGVslImMC3NhbXBsZV9mcmVxlEsAjA9wcmVkaWN0X2Vwc2lsb26UiYwPZ2xvYmFsX2NvbmRfZGltlEsJjAlsb3NzX3R5cGWUjAJsMpSMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMCXNhdmVfZGlmZpRoAmgGaC6GlFKUjApnZXRfY29tbWl0lGgCaAZoMYaUUpSMDWxvc3NfZGlzY291bnSUSwGMCmJhdGNoX3NpemWUSyCMC25fcmVmZXJlbmNllEsyjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwJZW1hX2RlY2F5lEc/79cKPXCj14wIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMpSMDGxvc3Nfd2VpZ2h0c5ROjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwLcmVhZF9jb25maWeUaAJoBmg/hpRSlIwGcHJlZml4lIwEY2ZtL5SMBGNvbnSUTowNYWN0aW9uX3dlaWdodJRLAYwKYWRkX2V4dHJhc5RoAmgGaEaGlFKUjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaEmGlFKUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMB2hvcml6b26USzJ1YmhGhpRSlC4="
+-    },
+-    "batch_size": 32,
+-    "bucket": null,
+-    "clip_denoised": true,
+-    "commit": "0da647c415cd8bd67a3e13b76c9b5edb252bac4e base",
+-    "config": "config.cfm_pose",
+-    "cont": null,
+-    "dataset": "pose-trajectory",
+-    "device": "cuda",
+-    "diffusion": "models.CFM",
+-    "dim_mults": {
+-        "_type": "tuple",
+-        "_value": [
+-            1,
+-            4,
+-            8
+-        ]
+-    },
+-    "ema_decay": 0.995,
+-    "eval_fstrings": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMDWNsaXBfZGVub2lzZWSUiIwRbl9zdGVwc19wZXJfZXBvY2iUTRAnjAZidWNrZXSUTowJbl9zYW1wbGVzlEsKjBFuX2RpZmZ1c2lvbl9zdGVwc5RLZIwNZXZhbF9mc3RyaW5nc5RoAmgGaA2GlFKUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwNbl90cmFpbl9zdGVwc5RKQA0DAIwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwIZXhwX25hbWWUjAxjZm0vSDUwX1QxMDCUjAlkaW1fbXVsdHOUSwFLBEsIh5SMBmRldmljZZSMBGN1ZGGUjAVta2RpcpRoAmgGaBuGlFKUjAhzZXRfc2VlZJRoAmgGaB6GlFKUjAduX3NhdmVzlEsyjAlzYXZlX2ZyZXGUTYgTjAt1c2Vfd2F2ZWxldJSJjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1zYXZlX3BhcmFsbGVslImMC3NhbXBsZV9mcmVxlEsAjA9wcmVkaWN0X2Vwc2lsb26UiYwPZ2xvYmFsX2NvbmRfZGltlEsJjAlsb3NzX3R5cGWUjAJsMpSMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMCXNhdmVfZGlmZpRoAmgGaC6GlFKUjApnZXRfY29tbWl0lGgCaAZoMYaUUpSMDWxvc3NfZGlzY291bnSUSwGMCmJhdGNoX3NpemWUSyCMC25fcmVmZXJlbmNllEsyjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwJZW1hX2RlY2F5lEc/79cKPXCj14wIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMpSMDGxvc3Nfd2VpZ2h0c5ROjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwLcmVhZF9jb25maWeUaAJoBmg/hpRSlIwGcHJlZml4lIwEY2ZtL5SMBGNvbnSUTowNYWN0aW9uX3dlaWdodJRLAYwKYWRkX2V4dHJhc5RoAmgGaEaGlFKUjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaEmGlFKUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMB2hvcml6b26USzJ1YmgNhpRSlC4="
+-    },
+-    "exp_name": "cfm/H50_T100",
+-    "generate_exp_name": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMDWNsaXBfZGVub2lzZWSUiIwRbl9zdGVwc19wZXJfZXBvY2iUTRAnjAZidWNrZXSUTowJbl9zYW1wbGVzlEsKjBFuX2RpZmZ1c2lvbl9zdGVwc5RLZIwNZXZhbF9mc3RyaW5nc5RoAmgGaA2GlFKUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwNbl90cmFpbl9zdGVwc5RKQA0DAIwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwIZXhwX25hbWWUjAxjZm0vSDUwX1QxMDCUjAlkaW1fbXVsdHOUSwFLBEsIh5SMBmRldmljZZSMBGN1ZGGUjAVta2RpcpRoAmgGaBuGlFKUjAhzZXRfc2VlZJRoAmgGaB6GlFKUjAduX3NhdmVzlEsyjAlzYXZlX2ZyZXGUTYgTjAt1c2Vfd2F2ZWxldJSJjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1zYXZlX3BhcmFsbGVslImMC3NhbXBsZV9mcmVxlEsAjA9wcmVkaWN0X2Vwc2lsb26UiYwPZ2xvYmFsX2NvbmRfZGltlEsJjAlsb3NzX3R5cGWUjAJsMpSMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMCXNhdmVfZGlmZpRoAmgGaC6GlFKUjApnZXRfY29tbWl0lGgCaAZoMYaUUpSMDWxvc3NfZGlzY291bnSUSwGMCmJhdGNoX3NpemWUSyCMC25fcmVmZXJlbmNllEsyjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwJZW1hX2RlY2F5lEc/79cKPXCj14wIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMpSMDGxvc3Nfd2VpZ2h0c5ROjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwLcmVhZF9jb25maWeUaAJoBmg/hpRSlIwGcHJlZml4lIwEY2ZtL5SMBGNvbnSUTowNYWN0aW9uX3dlaWdodJRLAYwKYWRkX2V4dHJhc5RoAmgGaEaGlFKUjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaEmGlFKUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMB2hvcml6b26USzJ1YmhJhpRSlC4="
+-    },
+-    "get_commit": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMDWNsaXBfZGVub2lzZWSUiIwRbl9zdGVwc19wZXJfZXBvY2iUTRAnjAZidWNrZXSUTowJbl9zYW1wbGVzlEsKjBFuX2RpZmZ1c2lvbl9zdGVwc5RLZIwNZXZhbF9mc3RyaW5nc5RoAmgGaA2GlFKUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwNbl90cmFpbl9zdGVwc5RKQA0DAIwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwIZXhwX25hbWWUjAxjZm0vSDUwX1QxMDCUjAlkaW1fbXVsdHOUSwFLBEsIh5SMBmRldmljZZSMBGN1ZGGUjAVta2RpcpRoAmgGaBuGlFKUjAhzZXRfc2VlZJRoAmgGaB6GlFKUjAduX3NhdmVzlEsyjAlzYXZlX2ZyZXGUTYgTjAt1c2Vfd2F2ZWxldJSJjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1zYXZlX3BhcmFsbGVslImMC3NhbXBsZV9mcmVxlEsAjA9wcmVkaWN0X2Vwc2lsb26UiYwPZ2xvYmFsX2NvbmRfZGltlEsJjAlsb3NzX3R5cGWUjAJsMpSMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMCXNhdmVfZGlmZpRoAmgGaC6GlFKUjApnZXRfY29tbWl0lGgCaAZoMYaUUpSMDWxvc3NfZGlzY291bnSUSwGMCmJhdGNoX3NpemWUSyCMC25fcmVmZXJlbmNllEsyjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwJZW1hX2RlY2F5lEc/79cKPXCj14wIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMpSMDGxvc3Nfd2VpZ2h0c5ROjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwLcmVhZF9jb25maWeUaAJoBmg/hpRSlIwGcHJlZml4lIwEY2ZtL5SMBGNvbnSUTowNYWN0aW9uX3dlaWdodJRLAYwKYWRkX2V4dHJhc5RoAmgGaEaGlFKUjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaEmGlFKUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMB2hvcml6b26USzJ1YmgxhpRSlC4="
+-    },
+-    "global_cond_dim": 9,
+-    "gradient_accumulate_every": 2,
+-    "horizon": 50,
+-    "learning_rate": 0.0002,
+-    "logbase": "logs/pose_trajectory",
+-    "loss_discount": 1,
+-    "loss_type": "l2",
+-    "loss_weights": null,
+-    "mkdir": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMDWNsaXBfZGVub2lzZWSUiIwRbl9zdGVwc19wZXJfZXBvY2iUTRAnjAZidWNrZXSUTowJbl9zYW1wbGVzlEsKjBFuX2RpZmZ1c2lvbl9zdGVwc5RLZIwNZXZhbF9mc3RyaW5nc5RoAmgGaA2GlFKUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwNbl90cmFpbl9zdGVwc5RKQA0DAIwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwIZXhwX25hbWWUjAxjZm0vSDUwX1QxMDCUjAlkaW1fbXVsdHOUSwFLBEsIh5SMBmRldmljZZSMBGN1ZGGUjAVta2RpcpRoAmgGaBuGlFKUjAhzZXRfc2VlZJRoAmgGaB6GlFKUjAduX3NhdmVzlEsyjAlzYXZlX2ZyZXGUTYgTjAt1c2Vfd2F2ZWxldJSJjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1zYXZlX3BhcmFsbGVslImMC3NhbXBsZV9mcmVxlEsAjA9wcmVkaWN0X2Vwc2lsb26UiYwPZ2xvYmFsX2NvbmRfZGltlEsJjAlsb3NzX3R5cGWUjAJsMpSMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMCXNhdmVfZGlmZpRoAmgGaC6GlFKUjApnZXRfY29tbWl0lGgCaAZoMYaUUpSMDWxvc3NfZGlzY291bnSUSwGMCmJhdGNoX3NpemWUSyCMC25fcmVmZXJlbmNllEsyjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwJZW1hX2RlY2F5lEc/79cKPXCj14wIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMpSMDGxvc3Nfd2VpZ2h0c5ROjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwLcmVhZF9jb25maWeUaAJoBmg/hpRSlIwGcHJlZml4lIwEY2ZtL5SMBGNvbnSUTowNYWN0aW9uX3dlaWdodJRLAYwKYWRkX2V4dHJhc5RoAmgGaEaGlFKUjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaEmGlFKUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMB2hvcml6b26USzJ1YmgbhpRSlC4="
+-    },
+-    "model": "models.ConditionalUnet1D",
+-    "n_diffusion_steps": 100,
+-    "n_reference": 50,
+-    "n_samples": 10,
+-    "n_saves": 50,
+-    "n_steps_per_epoch": 10000,
+-    "n_train_steps": 200000,
+-    "predict_epsilon": false,
+-    "prefix": "cfm/",
+-    "read_config": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMDWNsaXBfZGVub2lzZWSUiIwRbl9zdGVwc19wZXJfZXBvY2iUTRAnjAZidWNrZXSUTowJbl9zYW1wbGVzlEsKjBFuX2RpZmZ1c2lvbl9zdGVwc5RLZIwNZXZhbF9mc3RyaW5nc5RoAmgGaA2GlFKUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwNbl90cmFpbl9zdGVwc5RKQA0DAIwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwIZXhwX25hbWWUjAxjZm0vSDUwX1QxMDCUjAlkaW1fbXVsdHOUSwFLBEsIh5SMBmRldmljZZSMBGN1ZGGUjAVta2RpcpRoAmgGaBuGlFKUjAhzZXRfc2VlZJRoAmgGaB6GlFKUjAduX3NhdmVzlEsyjAlzYXZlX2ZyZXGUTYgTjAt1c2Vfd2F2ZWxldJSJjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1zYXZlX3BhcmFsbGVslImMC3NhbXBsZV9mcmVxlEsAjA9wcmVkaWN0X2Vwc2lsb26UiYwPZ2xvYmFsX2NvbmRfZGltlEsJjAlsb3NzX3R5cGWUjAJsMpSMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMCXNhdmVfZGlmZpRoAmgGaC6GlFKUjApnZXRfY29tbWl0lGgCaAZoMYaUUpSMDWxvc3NfZGlzY291bnSUSwGMCmJhdGNoX3NpemWUSyCMC25fcmVmZXJlbmNllEsyjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwJZW1hX2RlY2F5lEc/79cKPXCj14wIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMpSMDGxvc3Nfd2VpZ2h0c5ROjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwLcmVhZF9jb25maWeUaAJoBmg/hpRSlIwGcHJlZml4lIwEY2ZtL5SMBGNvbnSUTowNYWN0aW9uX3dlaWdodJRLAYwKYWRkX2V4dHJhc5RoAmgGaEaGlFKUjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaEmGlFKUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMB2hvcml6b26USzJ1Ymg/hpRSlC4="
+-    },
+-    "reproducibility": {
+-        "command_line": "python scripts/train.py --config config.cfm_pose",
+-        "git_has_uncommitted_changes": true,
+-        "git_root": "/home/bubble/PhysicalAI_flowmatching",
+-        "git_url": "https://github.com/BoltonAthitDavies/PhysicalAI_flowmatching/tree/0da647c415cd8bd67a3e13b76c9b5edb252bac4e",
+-        "time": "Fri Apr  3 15:02:43 2026"
+-    },
+-    "sample_freq": 0,
+-    "save_diff": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMDWNsaXBfZGVub2lzZWSUiIwRbl9zdGVwc19wZXJfZXBvY2iUTRAnjAZidWNrZXSUTowJbl9zYW1wbGVzlEsKjBFuX2RpZmZ1c2lvbl9zdGVwc5RLZIwNZXZhbF9mc3RyaW5nc5RoAmgGaA2GlFKUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwNbl90cmFpbl9zdGVwc5RKQA0DAIwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwIZXhwX25hbWWUjAxjZm0vSDUwX1QxMDCUjAlkaW1fbXVsdHOUSwFLBEsIh5SMBmRldmljZZSMBGN1ZGGUjAVta2RpcpRoAmgGaBuGlFKUjAhzZXRfc2VlZJRoAmgGaB6GlFKUjAduX3NhdmVzlEsyjAlzYXZlX2ZyZXGUTYgTjAt1c2Vfd2F2ZWxldJSJjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1zYXZlX3BhcmFsbGVslImMC3NhbXBsZV9mcmVxlEsAjA9wcmVkaWN0X2Vwc2lsb26UiYwPZ2xvYmFsX2NvbmRfZGltlEsJjAlsb3NzX3R5cGWUjAJsMpSMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMCXNhdmVfZGlmZpRoAmgGaC6GlFKUjApnZXRfY29tbWl0lGgCaAZoMYaUUpSMDWxvc3NfZGlzY291bnSUSwGMCmJhdGNoX3NpemWUSyCMC25fcmVmZXJlbmNllEsyjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwJZW1hX2RlY2F5lEc/79cKPXCj14wIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMpSMDGxvc3Nfd2VpZ2h0c5ROjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwLcmVhZF9jb25maWeUaAJoBmg/hpRSlIwGcHJlZml4lIwEY2ZtL5SMBGNvbnSUTowNYWN0aW9uX3dlaWdodJRLAYwKYWRkX2V4dHJhc5RoAmgGaEaGlFKUjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaEmGlFKUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMB2hvcml6b26USzJ1YmguhpRSlC4="
+-    },
+-    "save_freq": 5000,
+-    "save_parallel": false,
+-    "savepath": "logs/pose_trajectory/cfm/H50_T100/20260403-1502",
+-    "set_seed": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMDWNsaXBfZGVub2lzZWSUiIwRbl9zdGVwc19wZXJfZXBvY2iUTRAnjAZidWNrZXSUTowJbl9zYW1wbGVzlEsKjBFuX2RpZmZ1c2lvbl9zdGVwc5RLZIwNZXZhbF9mc3RyaW5nc5RoAmgGaA2GlFKUjBlncmFkaWVudF9hY2N1bXVsYXRlX2V2ZXJ5lEsCjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwNbl90cmFpbl9zdGVwc5RKQA0DAIwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwIZXhwX25hbWWUjAxjZm0vSDUwX1QxMDCUjAlkaW1fbXVsdHOUSwFLBEsIh5SMBmRldmljZZSMBGN1ZGGUjAVta2RpcpRoAmgGaBuGlFKUjAhzZXRfc2VlZJRoAmgGaB6GlFKUjAduX3NhdmVzlEsyjAlzYXZlX2ZyZXGUTYgTjAt1c2Vfd2F2ZWxldJSJjAZjb21taXSUjC0wZGE2NDdjNDE1Y2Q4YmQ2N2EzZTEzYjc2YzliNWVkYjI1MmJhYzRlIGJhc2WUjA1zYXZlX3BhcmFsbGVslImMC3NhbXBsZV9mcmVxlEsAjA9wcmVkaWN0X2Vwc2lsb26UiYwPZ2xvYmFsX2NvbmRfZGltlEsJjAlsb3NzX3R5cGWUjAJsMpSMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMCXNhdmVfZGlmZpRoAmgGaC6GlFKUjApnZXRfY29tbWl0lGgCaAZoMYaUUpSMDWxvc3NfZGlzY291bnSUSwGMCmJhdGNoX3NpemWUSyCMC25fcmVmZXJlbmNllEsyjAdkYXRhc2V0lIwPcG9zZS10cmFqZWN0b3J5lIwJZW1hX2RlY2F5lEc/79cKPXCj14wIc2F2ZXBhdGiUjC9sb2dzL3Bvc2VfdHJhamVjdG9yeS9jZm0vSDUwX1QxMDAvMjAyNjA0MDMtMTUwMpSMDGxvc3Nfd2VpZ2h0c5ROjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwLcmVhZF9jb25maWeUaAJoBmg/hpRSlIwGcHJlZml4lIwEY2ZtL5SMBGNvbnSUTowNYWN0aW9uX3dlaWdodJRLAYwKYWRkX2V4dHJhc5RoAmgGaEaGlFKUjBFnZW5lcmF0ZV9leHBfbmFtZZRoAmgGaEmGlFKUjAVtb2RlbJSMGG1vZGVscy5Db25kaXRpb25hbFVuZXQxRJSMB2hvcml6b26USzJ1YmgehpRSlC4="
+-    },
+-    "use_wavelet": false
+-}
+\ No newline at end of file
+diff --git a/logs/pose_trajectory/cfm/H50_T100/20260403-1502/diff.txt b/logs/pose_trajectory/cfm/H50_T100/20260403-1502/diff.txt
+deleted file mode 100644
+index a5e48d3..0000000
+--- a/logs/pose_trajectory/cfm/H50_T100/20260403-1502/diff.txt
++++ /dev/null
+@@ -1,276 +0,0 @@
+-diff --git a/diffuser/models/temporal_film.py b/diffuser/models/temporal_film.py
+-index ccef5f1..d75ac1d 100644
+---- a/diffuser/models/temporal_film.py
+-+++ b/diffuser/models/temporal_film.py
+-@@ -126,15 +126,18 @@ class ConditionalUnet1D(nn.Module):
+-         #     global_feature_cond_dim = lstm_out_dim + cond_dim
+-         # else:
+-         #     global_feature_cond_dim = cond_dim
+--        
+--        if encoder_type == 'lstm':
+--            self.film_encoder = EncoderRNN(input_dim=lstm_in_dim, hidden_dim = lstm_out_dim, num_layers = 1)
+--            self.film_encoder.flatten_parameters()
+-+
+-+        if lstm_out_dim is not None:
+-+            if encoder_type == 'lstm':
+-+                self.film_encoder = EncoderRNN(input_dim=lstm_in_dim, hidden_dim = lstm_out_dim, num_layers = 1)
+-+                self.film_encoder.flatten_parameters()
+-+            else:
+-+                self.film_encoder = nn.Sequential(
+-+                    nn.Linear(4, lstm_out_dim),
+-+                    nn.Mish(),
+-+                    nn.Linear(lstm_out_dim, lstm_out_dim))
+-         else:
+--            self.film_encoder = nn.Sequential(
+--                nn.Linear(4, lstm_out_dim),
+--                nn.Mish(),
+--                nn.Linear(lstm_out_dim, lstm_out_dim))
+-+            self.film_encoder = None
+- 
+- 
+-         in_out = list(zip(all_dims[:-1], all_dims[1:]))
+-@@ -248,15 +251,15 @@ class ConditionalUnet1D(nn.Module):
+-         global_feature = self.diffusion_step_encoder(timesteps)
+- 
+-         # print(global_cond)
+--        if global_cond is not None:               
+-+        if global_cond is not None:
+-             if 'hideouts' in global_cond.keys():
+-                 global_feature = torch.cat([global_cond['hideouts'], global_feature], axis=-1)
+- 
+--            if 'detections' in global_cond.keys():
+-+            if 'detections' in global_cond.keys() and self.film_encoder is not None:
+-                 detections_encoded = self.film_encoder(global_cond['detections'])
+-                 global_feature = torch.cat([detections_encoded, global_feature], axis=-1)
+- 
+--            if 'class' in global_cond.keys():
+-+            if 'class' in global_cond.keys() and self.film_encoder is not None:
+-                 encoded = self.film_encoder(global_cond['class'])
+-                 global_feature = torch.cat([encoded, global_feature], axis=-1)
+- 
+-diff --git a/scripts/train.py b/scripts/train.py
+-index 8ba52db..6226876 100644
+---- a/scripts/train.py
+-+++ b/scripts/train.py
+-@@ -1,17 +1,19 @@
+- import wandb
+-+from wandb.util import np
+- import diffuser.utils as utils
+- import pdb
+- import torch
+- from datetime import datetime
+- import os
+-+import numpy as np
+- 
+- #-----------------------------------------------------------------------------#
+- #----------------------------------- setup -----------------------------------#
+- #-----------------------------------------------------------------------------#
+- 
+- class Parser(utils.Parser):
+--    dataset: str = 'maze2d-large-v1'
+--    config: str = 'config.maze2d'
+-+    dataset: str = 'pose-trajectory'
+-+    config: str = 'config.cfm_pose'
+- 
+- args = Parser().parse_args('diffusion')
+- 
+-@@ -19,56 +21,112 @@ args = Parser().parse_args('diffusion')
+- #---------------------------------- dataset ----------------------------------#
+- #-----------------------------------------------------------------------------#
+- 
+--dataset_config = utils.Config(
+--    args.loader,
+--    savepath=(args.savepath, 'dataset_config.pkl'),
+--    folder_path=args.datapath,
+--    horizon=args.horizon,
+--    history_length=args.history_length,
+--    include_current=args.include_current,
+--    predict_features=args.predict_features,
+--    packed_features=args.packed_features,
+--    normalization=args.normalization
+--    )
+--
+--test_dataset_config = utils.Config(
+--    args.loader,
+--    savepath=(args.savepath, 'test_dataset_config.pkl'),
+--    folder_path=args.datapath,
+--    horizon=args.horizon,
+--    history_length=args.history_length,
+--    include_current=args.include_current,
+--    predict_features=args.predict_features,
+--    packed_features=args.packed_features,
+--    normalization=args.normalization
+--    )
+--
+--render_config = utils.Config(
+--    args.renderer,
+--    savepath=(args.savepath, 'render_config.pkl'),
+--    # env=args.dataset,
+--)
+-+import pandas as pd
+-+
+-+def load_npz_to_dataframe(filename: str, include_targets: bool = True):
+-+    ''' Reconstructs a DataFrame from a saved npz file '''
+-+    data = np.load(filename)
+-+    df = pd.DataFrame(data['features'], columns=data['feature_names'])
+-+    df['targets'] = [t for t in data['targets']]
+-+    
+-+    return df
+-+
+-+poseTraject_df = load_npz_to_dataframe("/home/bubble/PhysicalAI_flowmatching/data/pose_traject_dataset_2000x50_0.npz")
+-+
+-+# 1. One-hot encode : This creates the 3D one-hot vector part = {Accel, Const, Decel} [2]
+-+part_onehot = pd.get_dummies(poseTraject_df['part_enum'].astype(int), prefix='part').values
+-+
+-+# 2. Assemble the final Context Vector C (9 scalars total) [2]
+-+# C = [s_goal_x, s_goal_y, v_const, accel, part_0, part_1, part_2, q_init_x, q_init_y]
+-+C = np.concatenate([
+-+    poseTraject_df[['s_goal_x', 's_goal_y', 'v_const', 'accel']].values,
+-+    part_onehot,
+-+    poseTraject_df[['q_init_x', 'q_init_y']].values
+-+], axis=1)
+-+
+-+# 3. Process the Action Vector A (2D trajectories) [1]
+-+# The 'targets' column contains arrays of shape (50, 7) [5]
+-+# We stack them and keep only (x, y) which are indices 0 and 1 [6]
+-+targets_raw = np.stack(poseTraject_df['targets'].values) 
+-+A_2d = targets_raw[:, :, 0:2] # Shape: (batch_size, 50 steps, 2 variables)
+-+
+-+# 4. Prepare PyTorch Tensors for Flow Matching
+-+context_tensor = torch.tensor(C, dtype=torch.float32)  # (N, 9)
+-+
+-+# Trajectory as (N, 50, 2) for model: [horizon=50, transition_dim=2 (x,y)]
+-+A_for_model = torch.tensor(A_2d, dtype=torch.float32)  # (N, 50, 2)
+-+
+-+print(f"Context Vector C shape: {context_tensor.shape}")  # (N, 9)
+-+print(f"Action Vector A shape: {A_for_model.shape}")       # (N, 50, 2)
+- 
+--dataset = dataset_config()
+--test_dataset = test_dataset_config()
+--renderer = render_config()
+-+#-----------------------------------------------------------------------------#
+-+#------------------------------- dataset wrapper -----------------------------#
+-+#-----------------------------------------------------------------------------#
+- 
+--observation_dim = dataset.observation_dim
+-+from torch.utils.data import Dataset
+-+
+-+class PoseTrajectoryDataset(Dataset):
+-+    """Wraps pose trajectory data for T-CFM training."""
+-+    def __init__(self, actions, contexts):
+-+        self.actions = actions    # (N, 50, 2)
+-+        self.contexts = contexts  # (N, 9)
+-+        self.observation_dim = actions.shape[-1]  # 2
+-+        self.packed_dim = 0
+-+
+-+    def __len__(self):
+-+        return len(self.actions)
+-+
+-+    def __getitem__(self, idx):
+-+        action = self.actions[idx]       # (50, 2)
+-+        context = self.contexts[idx]     # (9,)
+-+        cond = (np.array([]), np.array([]))
+-+        return action, context, cond
+-+
+-+    def collate_fn(self, batch):
+-+        actions = torch.stack([b[0] for b in batch])
+-+        contexts = torch.stack([b[1] for b in batch])
+-+        conds = [b[2] for b in batch]
+-+        global_cond = {'hideouts': contexts}
+-+        return actions, global_cond, conds
+-+
+-+    def collate_fn_repeat(self, batch, num_samples):
+-+        actions = torch.stack([b[0] for b in batch]).repeat_interleave(num_samples, dim=0)
+-+        contexts = torch.stack([b[1] for b in batch]).repeat_interleave(num_samples, dim=0)
+-+        conds = [b[2] for b in batch for _ in range(num_samples)]
+-+        global_cond = {'hideouts': contexts}
+-+        return actions, global_cond, conds
+-+
+-+    def unnormalize(self, data):
+-+        return data  # No normalization applied for now
+-+
+-+# Train/test split (90/10)
+-+N = len(context_tensor)
+-+split = int(0.9 * N)
+-+indices = torch.randperm(N)
+-+train_idx, test_idx = indices[:split], indices[split:]
+-+
+-+dataset = PoseTrajectoryDataset(A_for_model[train_idx], context_tensor[train_idx])
+-+test_dataset = PoseTrajectoryDataset(A_for_model[test_idx], context_tensor[test_idx])
+-+
+-+observation_dim = 2   # x, y pose
+- action_dim = 0
+-+context_dim = context_tensor.shape[1]  # 9
+- 
+-+print(f"Train: {len(dataset)}, Test: {len(test_dataset)}")
+-+print(f"observation_dim={observation_dim}, context_dim={context_dim}")
+- 
+- #-----------------------------------------------------------------------------#
+- #------------------------------ model & trainer ------------------------------#
+- #-----------------------------------------------------------------------------#
+- 
+--print(args.global_cond_dim)
+- model_config = utils.Config(
+-     args.model,
+-     savepath=(args.savepath, 'model_config.pkl'),
+--    horizon=args.horizon,
+--    transition_dim=observation_dim + action_dim,
+--    lstm_in_dim=dataset.packed_dim,
+--    global_cond_dim = args.global_cond_dim,
+-+    horizon=50,                                   # 50 timesteps per trajectory
+-+    transition_dim=observation_dim + action_dim,   # 2 (x, y)
+-+    lstm_in_dim=None,                              # no sequential history encoder
+-+    lstm_out_dim=None,                             # no LSTM output
+-+    global_cond_dim=context_dim,                   # 9 (context vector C)
+-     cond_dim=observation_dim,
+-     dim_mults=args.dim_mults,
+-     device=args.device
+-@@ -77,7 +135,7 @@ model_config = utils.Config(
+- diffusion_config = utils.Config(
+-     args.diffusion,
+-     savepath=(args.savepath, 'diffusion_config.pkl'),
+--    horizon=args.horizon,
+-+    horizon=50,
+-     observation_dim=observation_dim,
+-     action_dim=action_dim,
+-     n_timesteps=args.n_diffusion_steps,
+-@@ -99,7 +157,7 @@ trainer_config = utils.Config(
+-     train_lr=args.learning_rate,
+-     gradient_accumulate_every=args.gradient_accumulate_every,
+-     ema_decay=args.ema_decay,
+--    sample_freq=args.sample_freq,
+-+    sample_freq=0,  # disable rendering (no renderer for this dataset)
+-     save_freq=args.save_freq,
+-     label_freq=int(args.n_train_steps // args.n_saves),
+-     save_parallel=args.save_parallel,
+-@@ -114,29 +172,14 @@ trainer_config = utils.Config(
+- #-----------------------------------------------------------------------------#
+- 
+- model = model_config()
+--
+--
+- diffusion = diffusion_config(model)
+-+trainer = trainer_config(diffusion, dataset, test_dataset, None)
+- 
+--trainer = trainer_config(diffusion, dataset, test_dataset, renderer)
+- if args.cont is not None:
+-     trainer.load_model(args.cont)
+- 
+--#-----------------------------------------------------------------------------#
+--#------------------------ test forward & backward pass -----------------------#
+--#-----------------------------------------------------------------------------#
+--
+- utils.report_parameters(model)
+- 
+--# print('Testing forward...', end=' ', flush=True)
+--# data, global_cond, conditions = dataset[0]
+--# data = torch.tensor(data, dtype=torch.float32).unsqueeze(0)
+--# global_cond = torch.tensor(global_cond, dtype=torch.float32).unsqueeze(0)
+--# loss, _ = diffusion.loss(data, global_cond, [conditions])
+--# loss.backward()
+--# print('✓')
+--
+--
+- #-----------------------------------------------------------------------------#
+- #--------------------------------- main loop ---------------------------------#
+- #-----------------------------------------------------------------------------#
+\ No newline at end of file
+diff --git a/logs/pose_trajectory/cfm/H50_T100/20260403-1502/diffusion_config.pkl b/logs/pose_trajectory/cfm/H50_T100/20260403-1502/diffusion_config.pkl
+deleted file mode 100644
+index 2ac58fe..0000000
+Binary files a/logs/pose_trajectory/cfm/H50_T100/20260403-1502/diffusion_config.pkl and /dev/null differ
+diff --git a/logs/pose_trajectory/cfm/H50_T100/20260403-1502/events.out.tfevents.1775203365.fibo3.814505.0 b/logs/pose_trajectory/cfm/H50_T100/20260403-1502/events.out.tfevents.1775203365.fibo3.814505.0
+deleted file mode 100644
+index 2312d6f..0000000
+Binary files a/logs/pose_trajectory/cfm/H50_T100/20260403-1502/events.out.tfevents.1775203365.fibo3.814505.0 and /dev/null differ
+diff --git a/logs/pose_trajectory/cfm/H50_T100/20260403-1502/model_config.pkl b/logs/pose_trajectory/cfm/H50_T100/20260403-1502/model_config.pkl
+deleted file mode 100644
+index 79bdd17..0000000
+Binary files a/logs/pose_trajectory/cfm/H50_T100/20260403-1502/model_config.pkl and /dev/null differ
+diff --git a/logs/pose_trajectory/cfm/H50_T100/20260403-1502/trainer_config.pkl b/logs/pose_trajectory/cfm/H50_T100/20260403-1502/trainer_config.pkl
+deleted file mode 100644
+index 8252a74..0000000
+Binary files a/logs/pose_trajectory/cfm/H50_T100/20260403-1502/trainer_config.pkl and /dev/null differ
+diff --git a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/args.json b/logs/pose_trajectory/cfm/H64_T100/20260403-1506/args.json
+deleted file mode 100644
+index 7e4576e..0000000
+--- a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/args.json
++++ /dev/null
+@@ -1,83 +0,0 @@
+-{
+-    "action_weight": 1,
+-    "add_extras": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMBGNvbnSUTowFbWtkaXKUaAJoBmgLhpRSlIwJc2F2ZV9mcmVxlE2IE4wRZ2VuZXJhdGVfZXhwX25hbWWUaAJoBmgPhpRSlIwGcHJlZml4lIwEY2ZtL5SMBW1vZGVslIwYbW9kZWxzLkNvbmRpdGlvbmFsVW5ldDFElIwHZGF0YXNldJSMD3Bvc2UtdHJhamVjdG9yeZSMD3ByZWRpY3RfZXBzaWxvbpSJjA1jbGlwX2Rlbm9pc2VklIiMDW5fdHJhaW5fc3RlcHOUSkANAwCMD2dsb2JhbF9jb25kX2RpbZRLCYwNZXZhbF9mc3RyaW5nc5RoAmgGaByGlFKUjAlsb3NzX3R5cGWUjAJsMpSMB25fc2F2ZXOUSzKMCHNldF9zZWVklGgCaAZoIoaUUpSMBmJ1Y2tldJROjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3NhbXBsZV9mcmVxlEsAjA1zYXZlX3BhcmFsbGVslImMBmRldmljZZSMBGN1ZGGUjAhzYXZlcGF0aJSML2xvZ3MvcG9zZV90cmFqZWN0b3J5L2NmbS9INjRfVDEwMC8yMDI2MDQwMy0xNTA2lIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMCmdldF9jb21taXSUaAJoBmguhpRSlIwLcmVhZF9jb25maWeUaAJoBmgxhpRSlIwLbl9yZWZlcmVuY2WUSzKMCWRpbV9tdWx0c5RLAUsESwiHlIwKYWRkX2V4dHJhc5RoAmgGaDeGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwNYWN0aW9uX3dlaWdodJRLAYwHaG9yaXpvbpRLQIwNbG9zc19kaXNjb3VudJRLAYwKYmF0Y2hfc2l6ZZRLIIwIZXhwX25hbWWUjAxjZm0vSDY0X1QxMDCUjAluX3NhbXBsZXOUSwqMCWVtYV9kZWNheZRHP+/XCj1wo9eMDGxvc3Nfd2VpZ2h0c5ROjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwLdXNlX3dhdmVsZXSUiYwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwZZ3JhZGllbnRfYWNjdW11bGF0ZV9ldmVyeZRLAowGY29tbWl0lIwtMGRhNjQ3YzQxNWNkOGJkNjdhM2UxM2I3NmM5YjVlZGIyNTJiYWM0ZSBiYXNllIwJc2F2ZV9kaWZmlGgCaAZoTIaUUpR1Ymg3hpRSlC4="
+-    },
+-    "batch_size": 32,
+-    "bucket": null,
+-    "clip_denoised": true,
+-    "commit": "0da647c415cd8bd67a3e13b76c9b5edb252bac4e base",
+-    "config": "config.cfm_pose",
+-    "cont": null,
+-    "dataset": "pose-trajectory",
+-    "device": "cuda",
+-    "diffusion": "models.CFM",
+-    "dim_mults": {
+-        "_type": "tuple",
+-        "_value": [
+-            1,
+-            4,
+-            8
+-        ]
+-    },
+-    "ema_decay": 0.995,
+-    "eval_fstrings": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMBGNvbnSUTowFbWtkaXKUaAJoBmgLhpRSlIwJc2F2ZV9mcmVxlE2IE4wRZ2VuZXJhdGVfZXhwX25hbWWUaAJoBmgPhpRSlIwGcHJlZml4lIwEY2ZtL5SMBW1vZGVslIwYbW9kZWxzLkNvbmRpdGlvbmFsVW5ldDFElIwHZGF0YXNldJSMD3Bvc2UtdHJhamVjdG9yeZSMD3ByZWRpY3RfZXBzaWxvbpSJjA1jbGlwX2Rlbm9pc2VklIiMDW5fdHJhaW5fc3RlcHOUSkANAwCMD2dsb2JhbF9jb25kX2RpbZRLCYwNZXZhbF9mc3RyaW5nc5RoAmgGaByGlFKUjAlsb3NzX3R5cGWUjAJsMpSMB25fc2F2ZXOUSzKMCHNldF9zZWVklGgCaAZoIoaUUpSMBmJ1Y2tldJROjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3NhbXBsZV9mcmVxlEsAjA1zYXZlX3BhcmFsbGVslImMBmRldmljZZSMBGN1ZGGUjAhzYXZlcGF0aJSML2xvZ3MvcG9zZV90cmFqZWN0b3J5L2NmbS9INjRfVDEwMC8yMDI2MDQwMy0xNTA2lIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMCmdldF9jb21taXSUaAJoBmguhpRSlIwLcmVhZF9jb25maWeUaAJoBmgxhpRSlIwLbl9yZWZlcmVuY2WUSzKMCWRpbV9tdWx0c5RLAUsESwiHlIwKYWRkX2V4dHJhc5RoAmgGaDeGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwNYWN0aW9uX3dlaWdodJRLAYwHaG9yaXpvbpRLQIwNbG9zc19kaXNjb3VudJRLAYwKYmF0Y2hfc2l6ZZRLIIwIZXhwX25hbWWUjAxjZm0vSDY0X1QxMDCUjAluX3NhbXBsZXOUSwqMCWVtYV9kZWNheZRHP+/XCj1wo9eMDGxvc3Nfd2VpZ2h0c5ROjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwLdXNlX3dhdmVsZXSUiYwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwZZ3JhZGllbnRfYWNjdW11bGF0ZV9ldmVyeZRLAowGY29tbWl0lIwtMGRhNjQ3YzQxNWNkOGJkNjdhM2UxM2I3NmM5YjVlZGIyNTJiYWM0ZSBiYXNllIwJc2F2ZV9kaWZmlGgCaAZoTIaUUpR1YmgchpRSlC4="
+-    },
+-    "exp_name": "cfm/H64_T100",
+-    "generate_exp_name": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMBGNvbnSUTowFbWtkaXKUaAJoBmgLhpRSlIwJc2F2ZV9mcmVxlE2IE4wRZ2VuZXJhdGVfZXhwX25hbWWUaAJoBmgPhpRSlIwGcHJlZml4lIwEY2ZtL5SMBW1vZGVslIwYbW9kZWxzLkNvbmRpdGlvbmFsVW5ldDFElIwHZGF0YXNldJSMD3Bvc2UtdHJhamVjdG9yeZSMD3ByZWRpY3RfZXBzaWxvbpSJjA1jbGlwX2Rlbm9pc2VklIiMDW5fdHJhaW5fc3RlcHOUSkANAwCMD2dsb2JhbF9jb25kX2RpbZRLCYwNZXZhbF9mc3RyaW5nc5RoAmgGaByGlFKUjAlsb3NzX3R5cGWUjAJsMpSMB25fc2F2ZXOUSzKMCHNldF9zZWVklGgCaAZoIoaUUpSMBmJ1Y2tldJROjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3NhbXBsZV9mcmVxlEsAjA1zYXZlX3BhcmFsbGVslImMBmRldmljZZSMBGN1ZGGUjAhzYXZlcGF0aJSML2xvZ3MvcG9zZV90cmFqZWN0b3J5L2NmbS9INjRfVDEwMC8yMDI2MDQwMy0xNTA2lIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMCmdldF9jb21taXSUaAJoBmguhpRSlIwLcmVhZF9jb25maWeUaAJoBmgxhpRSlIwLbl9yZWZlcmVuY2WUSzKMCWRpbV9tdWx0c5RLAUsESwiHlIwKYWRkX2V4dHJhc5RoAmgGaDeGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwNYWN0aW9uX3dlaWdodJRLAYwHaG9yaXpvbpRLQIwNbG9zc19kaXNjb3VudJRLAYwKYmF0Y2hfc2l6ZZRLIIwIZXhwX25hbWWUjAxjZm0vSDY0X1QxMDCUjAluX3NhbXBsZXOUSwqMCWVtYV9kZWNheZRHP+/XCj1wo9eMDGxvc3Nfd2VpZ2h0c5ROjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwLdXNlX3dhdmVsZXSUiYwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwZZ3JhZGllbnRfYWNjdW11bGF0ZV9ldmVyeZRLAowGY29tbWl0lIwtMGRhNjQ3YzQxNWNkOGJkNjdhM2UxM2I3NmM5YjVlZGIyNTJiYWM0ZSBiYXNllIwJc2F2ZV9kaWZmlGgCaAZoTIaUUpR1YmgPhpRSlC4="
+-    },
+-    "get_commit": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMBGNvbnSUTowFbWtkaXKUaAJoBmgLhpRSlIwJc2F2ZV9mcmVxlE2IE4wRZ2VuZXJhdGVfZXhwX25hbWWUaAJoBmgPhpRSlIwGcHJlZml4lIwEY2ZtL5SMBW1vZGVslIwYbW9kZWxzLkNvbmRpdGlvbmFsVW5ldDFElIwHZGF0YXNldJSMD3Bvc2UtdHJhamVjdG9yeZSMD3ByZWRpY3RfZXBzaWxvbpSJjA1jbGlwX2Rlbm9pc2VklIiMDW5fdHJhaW5fc3RlcHOUSkANAwCMD2dsb2JhbF9jb25kX2RpbZRLCYwNZXZhbF9mc3RyaW5nc5RoAmgGaByGlFKUjAlsb3NzX3R5cGWUjAJsMpSMB25fc2F2ZXOUSzKMCHNldF9zZWVklGgCaAZoIoaUUpSMBmJ1Y2tldJROjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3NhbXBsZV9mcmVxlEsAjA1zYXZlX3BhcmFsbGVslImMBmRldmljZZSMBGN1ZGGUjAhzYXZlcGF0aJSML2xvZ3MvcG9zZV90cmFqZWN0b3J5L2NmbS9INjRfVDEwMC8yMDI2MDQwMy0xNTA2lIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMCmdldF9jb21taXSUaAJoBmguhpRSlIwLcmVhZF9jb25maWeUaAJoBmgxhpRSlIwLbl9yZWZlcmVuY2WUSzKMCWRpbV9tdWx0c5RLAUsESwiHlIwKYWRkX2V4dHJhc5RoAmgGaDeGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwNYWN0aW9uX3dlaWdodJRLAYwHaG9yaXpvbpRLQIwNbG9zc19kaXNjb3VudJRLAYwKYmF0Y2hfc2l6ZZRLIIwIZXhwX25hbWWUjAxjZm0vSDY0X1QxMDCUjAluX3NhbXBsZXOUSwqMCWVtYV9kZWNheZRHP+/XCj1wo9eMDGxvc3Nfd2VpZ2h0c5ROjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwLdXNlX3dhdmVsZXSUiYwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwZZ3JhZGllbnRfYWNjdW11bGF0ZV9ldmVyeZRLAowGY29tbWl0lIwtMGRhNjQ3YzQxNWNkOGJkNjdhM2UxM2I3NmM5YjVlZGIyNTJiYWM0ZSBiYXNllIwJc2F2ZV9kaWZmlGgCaAZoTIaUUpR1YmguhpRSlC4="
+-    },
+-    "global_cond_dim": 9,
+-    "gradient_accumulate_every": 2,
+-    "horizon": 64,
+-    "learning_rate": 0.0002,
+-    "logbase": "logs/pose_trajectory",
+-    "loss_discount": 1,
+-    "loss_type": "l2",
+-    "loss_weights": null,
+-    "mkdir": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMBGNvbnSUTowFbWtkaXKUaAJoBmgLhpRSlIwJc2F2ZV9mcmVxlE2IE4wRZ2VuZXJhdGVfZXhwX25hbWWUaAJoBmgPhpRSlIwGcHJlZml4lIwEY2ZtL5SMBW1vZGVslIwYbW9kZWxzLkNvbmRpdGlvbmFsVW5ldDFElIwHZGF0YXNldJSMD3Bvc2UtdHJhamVjdG9yeZSMD3ByZWRpY3RfZXBzaWxvbpSJjA1jbGlwX2Rlbm9pc2VklIiMDW5fdHJhaW5fc3RlcHOUSkANAwCMD2dsb2JhbF9jb25kX2RpbZRLCYwNZXZhbF9mc3RyaW5nc5RoAmgGaByGlFKUjAlsb3NzX3R5cGWUjAJsMpSMB25fc2F2ZXOUSzKMCHNldF9zZWVklGgCaAZoIoaUUpSMBmJ1Y2tldJROjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3NhbXBsZV9mcmVxlEsAjA1zYXZlX3BhcmFsbGVslImMBmRldmljZZSMBGN1ZGGUjAhzYXZlcGF0aJSML2xvZ3MvcG9zZV90cmFqZWN0b3J5L2NmbS9INjRfVDEwMC8yMDI2MDQwMy0xNTA2lIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMCmdldF9jb21taXSUaAJoBmguhpRSlIwLcmVhZF9jb25maWeUaAJoBmgxhpRSlIwLbl9yZWZlcmVuY2WUSzKMCWRpbV9tdWx0c5RLAUsESwiHlIwKYWRkX2V4dHJhc5RoAmgGaDeGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwNYWN0aW9uX3dlaWdodJRLAYwHaG9yaXpvbpRLQIwNbG9zc19kaXNjb3VudJRLAYwKYmF0Y2hfc2l6ZZRLIIwIZXhwX25hbWWUjAxjZm0vSDY0X1QxMDCUjAluX3NhbXBsZXOUSwqMCWVtYV9kZWNheZRHP+/XCj1wo9eMDGxvc3Nfd2VpZ2h0c5ROjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwLdXNlX3dhdmVsZXSUiYwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwZZ3JhZGllbnRfYWNjdW11bGF0ZV9ldmVyeZRLAowGY29tbWl0lIwtMGRhNjQ3YzQxNWNkOGJkNjdhM2UxM2I3NmM5YjVlZGIyNTJiYWM0ZSBiYXNllIwJc2F2ZV9kaWZmlGgCaAZoTIaUUpR1YmgLhpRSlC4="
+-    },
+-    "model": "models.ConditionalUnet1D",
+-    "n_diffusion_steps": 100,
+-    "n_reference": 50,
+-    "n_samples": 10,
+-    "n_saves": 50,
+-    "n_steps_per_epoch": 10000,
+-    "n_train_steps": 200000,
+-    "predict_epsilon": false,
+-    "prefix": "cfm/",
+-    "read_config": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMBGNvbnSUTowFbWtkaXKUaAJoBmgLhpRSlIwJc2F2ZV9mcmVxlE2IE4wRZ2VuZXJhdGVfZXhwX25hbWWUaAJoBmgPhpRSlIwGcHJlZml4lIwEY2ZtL5SMBW1vZGVslIwYbW9kZWxzLkNvbmRpdGlvbmFsVW5ldDFElIwHZGF0YXNldJSMD3Bvc2UtdHJhamVjdG9yeZSMD3ByZWRpY3RfZXBzaWxvbpSJjA1jbGlwX2Rlbm9pc2VklIiMDW5fdHJhaW5fc3RlcHOUSkANAwCMD2dsb2JhbF9jb25kX2RpbZRLCYwNZXZhbF9mc3RyaW5nc5RoAmgGaByGlFKUjAlsb3NzX3R5cGWUjAJsMpSMB25fc2F2ZXOUSzKMCHNldF9zZWVklGgCaAZoIoaUUpSMBmJ1Y2tldJROjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3NhbXBsZV9mcmVxlEsAjA1zYXZlX3BhcmFsbGVslImMBmRldmljZZSMBGN1ZGGUjAhzYXZlcGF0aJSML2xvZ3MvcG9zZV90cmFqZWN0b3J5L2NmbS9INjRfVDEwMC8yMDI2MDQwMy0xNTA2lIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMCmdldF9jb21taXSUaAJoBmguhpRSlIwLcmVhZF9jb25maWeUaAJoBmgxhpRSlIwLbl9yZWZlcmVuY2WUSzKMCWRpbV9tdWx0c5RLAUsESwiHlIwKYWRkX2V4dHJhc5RoAmgGaDeGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwNYWN0aW9uX3dlaWdodJRLAYwHaG9yaXpvbpRLQIwNbG9zc19kaXNjb3VudJRLAYwKYmF0Y2hfc2l6ZZRLIIwIZXhwX25hbWWUjAxjZm0vSDY0X1QxMDCUjAluX3NhbXBsZXOUSwqMCWVtYV9kZWNheZRHP+/XCj1wo9eMDGxvc3Nfd2VpZ2h0c5ROjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwLdXNlX3dhdmVsZXSUiYwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwZZ3JhZGllbnRfYWNjdW11bGF0ZV9ldmVyeZRLAowGY29tbWl0lIwtMGRhNjQ3YzQxNWNkOGJkNjdhM2UxM2I3NmM5YjVlZGIyNTJiYWM0ZSBiYXNllIwJc2F2ZV9kaWZmlGgCaAZoTIaUUpR1YmgxhpRSlC4="
+-    },
+-    "reproducibility": {
+-        "command_line": "python scripts/train.py --config config.cfm_pose",
+-        "git_has_uncommitted_changes": true,
+-        "git_root": "/home/bubble/PhysicalAI_flowmatching",
+-        "git_url": "https://github.com/BoltonAthitDavies/PhysicalAI_flowmatching/tree/0da647c415cd8bd67a3e13b76c9b5edb252bac4e",
+-        "time": "Fri Apr  3 15:06:58 2026"
+-    },
+-    "sample_freq": 0,
+-    "save_diff": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMBGNvbnSUTowFbWtkaXKUaAJoBmgLhpRSlIwJc2F2ZV9mcmVxlE2IE4wRZ2VuZXJhdGVfZXhwX25hbWWUaAJoBmgPhpRSlIwGcHJlZml4lIwEY2ZtL5SMBW1vZGVslIwYbW9kZWxzLkNvbmRpdGlvbmFsVW5ldDFElIwHZGF0YXNldJSMD3Bvc2UtdHJhamVjdG9yeZSMD3ByZWRpY3RfZXBzaWxvbpSJjA1jbGlwX2Rlbm9pc2VklIiMDW5fdHJhaW5fc3RlcHOUSkANAwCMD2dsb2JhbF9jb25kX2RpbZRLCYwNZXZhbF9mc3RyaW5nc5RoAmgGaByGlFKUjAlsb3NzX3R5cGWUjAJsMpSMB25fc2F2ZXOUSzKMCHNldF9zZWVklGgCaAZoIoaUUpSMBmJ1Y2tldJROjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3NhbXBsZV9mcmVxlEsAjA1zYXZlX3BhcmFsbGVslImMBmRldmljZZSMBGN1ZGGUjAhzYXZlcGF0aJSML2xvZ3MvcG9zZV90cmFqZWN0b3J5L2NmbS9INjRfVDEwMC8yMDI2MDQwMy0xNTA2lIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMCmdldF9jb21taXSUaAJoBmguhpRSlIwLcmVhZF9jb25maWeUaAJoBmgxhpRSlIwLbl9yZWZlcmVuY2WUSzKMCWRpbV9tdWx0c5RLAUsESwiHlIwKYWRkX2V4dHJhc5RoAmgGaDeGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwNYWN0aW9uX3dlaWdodJRLAYwHaG9yaXpvbpRLQIwNbG9zc19kaXNjb3VudJRLAYwKYmF0Y2hfc2l6ZZRLIIwIZXhwX25hbWWUjAxjZm0vSDY0X1QxMDCUjAluX3NhbXBsZXOUSwqMCWVtYV9kZWNheZRHP+/XCj1wo9eMDGxvc3Nfd2VpZ2h0c5ROjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwLdXNlX3dhdmVsZXSUiYwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwZZ3JhZGllbnRfYWNjdW11bGF0ZV9ldmVyeZRLAowGY29tbWl0lIwtMGRhNjQ3YzQxNWNkOGJkNjdhM2UxM2I3NmM5YjVlZGIyNTJiYWM0ZSBiYXNllIwJc2F2ZV9kaWZmlGgCaAZoTIaUUpR1YmhMhpRSlC4="
+-    },
+-    "save_freq": 5000,
+-    "save_parallel": false,
+-    "savepath": "logs/pose_trajectory/cfm/H64_T100/20260403-1506",
+-    "set_seed": {
+-        "_type": "python_object (type = method)",
+-        "_value": "gASV8AMAAAAAAACMCGJ1aWx0aW5zlIwHZ2V0YXR0cpSTlIwIX19tYWluX1+UjAZQYXJzZXKUk5QpgZR9lCiMBmNvbmZpZ5SMD2NvbmZpZy5jZm1fcG9zZZSMBGNvbnSUTowFbWtkaXKUaAJoBmgLhpRSlIwJc2F2ZV9mcmVxlE2IE4wRZ2VuZXJhdGVfZXhwX25hbWWUaAJoBmgPhpRSlIwGcHJlZml4lIwEY2ZtL5SMBW1vZGVslIwYbW9kZWxzLkNvbmRpdGlvbmFsVW5ldDFElIwHZGF0YXNldJSMD3Bvc2UtdHJhamVjdG9yeZSMD3ByZWRpY3RfZXBzaWxvbpSJjA1jbGlwX2Rlbm9pc2VklIiMDW5fdHJhaW5fc3RlcHOUSkANAwCMD2dsb2JhbF9jb25kX2RpbZRLCYwNZXZhbF9mc3RyaW5nc5RoAmgGaByGlFKUjAlsb3NzX3R5cGWUjAJsMpSMB25fc2F2ZXOUSzKMCHNldF9zZWVklGgCaAZoIoaUUpSMBmJ1Y2tldJROjBFuX3N0ZXBzX3Blcl9lcG9jaJRNECeMC3NhbXBsZV9mcmVxlEsAjA1zYXZlX3BhcmFsbGVslImMBmRldmljZZSMBGN1ZGGUjAhzYXZlcGF0aJSML2xvZ3MvcG9zZV90cmFqZWN0b3J5L2NmbS9INjRfVDEwMC8yMDI2MDQwMy0xNTA2lIwRbl9kaWZmdXNpb25fc3RlcHOUS2SMCmdldF9jb21taXSUaAJoBmguhpRSlIwLcmVhZF9jb25maWeUaAJoBmgxhpRSlIwLbl9yZWZlcmVuY2WUSzKMCWRpbV9tdWx0c5RLAUsESwiHlIwKYWRkX2V4dHJhc5RoAmgGaDeGlFKUjAlkaWZmdXNpb26UjAptb2RlbHMuQ0ZNlIwNYWN0aW9uX3dlaWdodJRLAYwHaG9yaXpvbpRLQIwNbG9zc19kaXNjb3VudJRLAYwKYmF0Y2hfc2l6ZZRLIIwIZXhwX25hbWWUjAxjZm0vSDY0X1QxMDCUjAluX3NhbXBsZXOUSwqMCWVtYV9kZWNheZRHP+/XCj1wo9eMDGxvc3Nfd2VpZ2h0c5ROjA1sZWFybmluZ19yYXRllEc/Kjbi6xxDLYwLdXNlX3dhdmVsZXSUiYwHbG9nYmFzZZSMFGxvZ3MvcG9zZV90cmFqZWN0b3J5lIwZZ3JhZGllbnRfYWNjdW11bGF0ZV9ldmVyeZRLAowGY29tbWl0lIwtMGRhNjQ3YzQxNWNkOGJkNjdhM2UxM2I3NmM5YjVlZGIyNTJiYWM0ZSBiYXNllIwJc2F2ZV9kaWZmlGgCaAZoTIaUUpR1YmgihpRSlC4="
+-    },
+-    "use_wavelet": false
+-}
+\ No newline at end of file
+diff --git a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/diff.txt b/logs/pose_trajectory/cfm/H64_T100/20260403-1506/diff.txt
+deleted file mode 100644
+index d980e9e..0000000
+--- a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/diff.txt
++++ /dev/null
+@@ -1,278 +0,0 @@
+-diff --git a/diffuser/models/temporal_film.py b/diffuser/models/temporal_film.py
+-index ccef5f1..d75ac1d 100644
+---- a/diffuser/models/temporal_film.py
+-+++ b/diffuser/models/temporal_film.py
+-@@ -126,15 +126,18 @@ class ConditionalUnet1D(nn.Module):
+-         #     global_feature_cond_dim = lstm_out_dim + cond_dim
+-         # else:
+-         #     global_feature_cond_dim = cond_dim
+--        
+--        if encoder_type == 'lstm':
+--            self.film_encoder = EncoderRNN(input_dim=lstm_in_dim, hidden_dim = lstm_out_dim, num_layers = 1)
+--            self.film_encoder.flatten_parameters()
+-+
+-+        if lstm_out_dim is not None:
+-+            if encoder_type == 'lstm':
+-+                self.film_encoder = EncoderRNN(input_dim=lstm_in_dim, hidden_dim = lstm_out_dim, num_layers = 1)
+-+                self.film_encoder.flatten_parameters()
+-+            else:
+-+                self.film_encoder = nn.Sequential(
+-+                    nn.Linear(4, lstm_out_dim),
+-+                    nn.Mish(),
+-+                    nn.Linear(lstm_out_dim, lstm_out_dim))
+-         else:
+--            self.film_encoder = nn.Sequential(
+--                nn.Linear(4, lstm_out_dim),
+--                nn.Mish(),
+--                nn.Linear(lstm_out_dim, lstm_out_dim))
+-+            self.film_encoder = None
+- 
+- 
+-         in_out = list(zip(all_dims[:-1], all_dims[1:]))
+-@@ -248,15 +251,15 @@ class ConditionalUnet1D(nn.Module):
+-         global_feature = self.diffusion_step_encoder(timesteps)
+- 
+-         # print(global_cond)
+--        if global_cond is not None:               
+-+        if global_cond is not None:
+-             if 'hideouts' in global_cond.keys():
+-                 global_feature = torch.cat([global_cond['hideouts'], global_feature], axis=-1)
+- 
+--            if 'detections' in global_cond.keys():
+-+            if 'detections' in global_cond.keys() and self.film_encoder is not None:
+-                 detections_encoded = self.film_encoder(global_cond['detections'])
+-                 global_feature = torch.cat([detections_encoded, global_feature], axis=-1)
+- 
+--            if 'class' in global_cond.keys():
+-+            if 'class' in global_cond.keys() and self.film_encoder is not None:
+-                 encoded = self.film_encoder(global_cond['class'])
+-                 global_feature = torch.cat([encoded, global_feature], axis=-1)
+- 
+-diff --git a/scripts/train.py b/scripts/train.py
+-index 8ba52db..f705113 100644
+---- a/scripts/train.py
+-+++ b/scripts/train.py
+-@@ -1,17 +1,19 @@
+- import wandb
+-+from wandb.util import np
+- import diffuser.utils as utils
+- import pdb
+- import torch
+- from datetime import datetime
+- import os
+-+import numpy as np
+- 
+- #-----------------------------------------------------------------------------#
+- #----------------------------------- setup -----------------------------------#
+- #-----------------------------------------------------------------------------#
+- 
+- class Parser(utils.Parser):
+--    dataset: str = 'maze2d-large-v1'
+--    config: str = 'config.maze2d'
+-+    dataset: str = 'pose-trajectory'
+-+    config: str = 'config.cfm_pose'
+- 
+- args = Parser().parse_args('diffusion')
+- 
+-@@ -19,56 +21,114 @@ args = Parser().parse_args('diffusion')
+- #---------------------------------- dataset ----------------------------------#
+- #-----------------------------------------------------------------------------#
+- 
+--dataset_config = utils.Config(
+--    args.loader,
+--    savepath=(args.savepath, 'dataset_config.pkl'),
+--    folder_path=args.datapath,
+--    horizon=args.horizon,
+--    history_length=args.history_length,
+--    include_current=args.include_current,
+--    predict_features=args.predict_features,
+--    packed_features=args.packed_features,
+--    normalization=args.normalization
+--    )
+--
+--test_dataset_config = utils.Config(
+--    args.loader,
+--    savepath=(args.savepath, 'test_dataset_config.pkl'),
+--    folder_path=args.datapath,
+--    horizon=args.horizon,
+--    history_length=args.history_length,
+--    include_current=args.include_current,
+--    predict_features=args.predict_features,
+--    packed_features=args.packed_features,
+--    normalization=args.normalization
+--    )
+--
+--render_config = utils.Config(
+--    args.renderer,
+--    savepath=(args.savepath, 'render_config.pkl'),
+--    # env=args.dataset,
+--)
+-+import pandas as pd
+-+
+-+def load_npz_to_dataframe(filename: str, include_targets: bool = True):
+-+    ''' Reconstructs a DataFrame from a saved npz file '''
+-+    data = np.load(filename)
+-+    df = pd.DataFrame(data['features'], columns=data['feature_names'])
+-+    df['targets'] = [t for t in data['targets']]
+-+    
+-+    return df
+-+
+-+poseTraject_df = load_npz_to_dataframe("/home/bubble/PhysicalAI_flowmatching/data/pose_traject_dataset_2000x50_0.npz")
+-+
+-+# 1. One-hot encode : This creates the 3D one-hot vector part = {Accel, Const, Decel} [2]
+-+part_onehot = pd.get_dummies(poseTraject_df['part_enum'].astype(int), prefix='part').values
+-+
+-+# 2. Assemble the final Context Vector C (9 scalars total) [2]
+-+# C = [s_goal_x, s_goal_y, v_const, accel, part_0, part_1, part_2, q_init_x, q_init_y]
+-+C = np.concatenate([
+-+    poseTraject_df[['s_goal_x', 's_goal_y', 'v_const', 'accel']].values,
+-+    part_onehot,
+-+    poseTraject_df[['q_init_x', 'q_init_y']].values
+-+], axis=1)
+-+
+-+# 3. Process the Action Vector A (2D trajectories) [1]
+-+# The 'targets' column contains arrays of shape (50, 7) [5]
+-+# We stack them and keep only (x, y) which are indices 0 and 1 [6]
+-+targets_raw = np.stack(poseTraject_df['targets'].values) 
+-+A_2d = targets_raw[:, :, 0:2] # Shape: (batch_size, 50 steps, 2 variables)
+-+
+-+# 4. Prepare PyTorch Tensors for Flow Matching
+-+context_tensor = torch.tensor(C, dtype=torch.float32)  # (N, 9)
+-+
+-+# Pad trajectory from 50 to 64 steps (power of 2 required by UNet down/upsample)
+-+HORIZON = 64
+-+A_padded = np.pad(A_2d, ((0,0), (0, HORIZON - A_2d.shape[1]), (0,0)), mode='edge')
+-+A_for_model = torch.tensor(A_padded, dtype=torch.float32)  # (N, 64, 2)
+-+
+-+print(f"Context Vector C shape: {context_tensor.shape}")  # (N, 9)
+-+print(f"Action Vector A shape: {A_for_model.shape}")       # (N, 64, 2)
+- 
+--dataset = dataset_config()
+--test_dataset = test_dataset_config()
+--renderer = render_config()
+-+#-----------------------------------------------------------------------------#
+-+#------------------------------- dataset wrapper -----------------------------#
+-+#-----------------------------------------------------------------------------#
+- 
+--observation_dim = dataset.observation_dim
+-+from torch.utils.data import Dataset
+-+
+-+class PoseTrajectoryDataset(Dataset):
+-+    """Wraps pose trajectory data for T-CFM training."""
+-+    def __init__(self, actions, contexts):
+-+        self.actions = actions    # (N, 50, 2)
+-+        self.contexts = contexts  # (N, 9)
+-+        self.observation_dim = actions.shape[-1]  # 2
+-+        self.packed_dim = 0
+-+
+-+    def __len__(self):
+-+        return len(self.actions)
+-+
+-+    def __getitem__(self, idx):
+-+        action = self.actions[idx]       # (50, 2)
+-+        context = self.contexts[idx]     # (9,)
+-+        cond = (np.array([]), np.array([]))
+-+        return action, context, cond
+-+
+-+    def collate_fn(self, batch):
+-+        actions = torch.stack([b[0] for b in batch])
+-+        contexts = torch.stack([b[1] for b in batch])
+-+        conds = [b[2] for b in batch]
+-+        global_cond = {'hideouts': contexts}
+-+        return actions, global_cond, conds
+-+
+-+    def collate_fn_repeat(self, batch, num_samples):
+-+        actions = torch.stack([b[0] for b in batch]).repeat_interleave(num_samples, dim=0)
+-+        contexts = torch.stack([b[1] for b in batch]).repeat_interleave(num_samples, dim=0)
+-+        conds = [b[2] for b in batch for _ in range(num_samples)]
+-+        global_cond = {'hideouts': contexts}
+-+        return actions, global_cond, conds
+-+
+-+    def unnormalize(self, data):
+-+        return data  # No normalization applied for now
+-+
+-+# Train/test split (90/10)
+-+N = len(context_tensor)
+-+split = int(0.9 * N)
+-+indices = torch.randperm(N)
+-+train_idx, test_idx = indices[:split], indices[split:]
+-+
+-+dataset = PoseTrajectoryDataset(A_for_model[train_idx], context_tensor[train_idx])
+-+test_dataset = PoseTrajectoryDataset(A_for_model[test_idx], context_tensor[test_idx])
+-+
+-+observation_dim = 2   # x, y pose
+- action_dim = 0
+-+context_dim = context_tensor.shape[1]  # 9
+- 
+-+print(f"Train: {len(dataset)}, Test: {len(test_dataset)}")
+-+print(f"observation_dim={observation_dim}, context_dim={context_dim}")
+- 
+- #-----------------------------------------------------------------------------#
+- #------------------------------ model & trainer ------------------------------#
+- #-----------------------------------------------------------------------------#
+- 
+--print(args.global_cond_dim)
+- model_config = utils.Config(
+-     args.model,
+-     savepath=(args.savepath, 'model_config.pkl'),
+--    horizon=args.horizon,
+--    transition_dim=observation_dim + action_dim,
+--    lstm_in_dim=dataset.packed_dim,
+--    global_cond_dim = args.global_cond_dim,
+-+    horizon=HORIZON,                                # 64 (padded from 50, power of 2 for UNet)
+-+    transition_dim=observation_dim + action_dim,   # 2 (x, y)
+-+    lstm_in_dim=None,                              # no sequential history encoder
+-+    lstm_out_dim=None,                             # no LSTM output
+-+    global_cond_dim=context_dim,                   # 9 (context vector C)
+-     cond_dim=observation_dim,
+-     dim_mults=args.dim_mults,
+-     device=args.device
+-@@ -77,7 +137,7 @@ model_config = utils.Config(
+- diffusion_config = utils.Config(
+-     args.diffusion,
+-     savepath=(args.savepath, 'diffusion_config.pkl'),
+--    horizon=args.horizon,
+-+    horizon=HORIZON,
+-     observation_dim=observation_dim,
+-     action_dim=action_dim,
+-     n_timesteps=args.n_diffusion_steps,
+-@@ -99,7 +159,7 @@ trainer_config = utils.Config(
+-     train_lr=args.learning_rate,
+-     gradient_accumulate_every=args.gradient_accumulate_every,
+-     ema_decay=args.ema_decay,
+--    sample_freq=args.sample_freq,
+-+    sample_freq=0,  # disable rendering (no renderer for this dataset)
+-     save_freq=args.save_freq,
+-     label_freq=int(args.n_train_steps // args.n_saves),
+-     save_parallel=args.save_parallel,
+-@@ -114,29 +174,14 @@ trainer_config = utils.Config(
+- #-----------------------------------------------------------------------------#
+- 
+- model = model_config()
+--
+--
+- diffusion = diffusion_config(model)
+-+trainer = trainer_config(diffusion, dataset, test_dataset, None)
+- 
+--trainer = trainer_config(diffusion, dataset, test_dataset, renderer)
+- if args.cont is not None:
+-     trainer.load_model(args.cont)
+- 
+--#-----------------------------------------------------------------------------#
+--#------------------------ test forward & backward pass -----------------------#
+--#-----------------------------------------------------------------------------#
+--
+- utils.report_parameters(model)
+- 
+--# print('Testing forward...', end=' ', flush=True)
+--# data, global_cond, conditions = dataset[0]
+--# data = torch.tensor(data, dtype=torch.float32).unsqueeze(0)
+--# global_cond = torch.tensor(global_cond, dtype=torch.float32).unsqueeze(0)
+--# loss, _ = diffusion.loss(data, global_cond, [conditions])
+--# loss.backward()
+--# print('✓')
+--
+--
+- #-----------------------------------------------------------------------------#
+- #--------------------------------- main loop ---------------------------------#
+- #-----------------------------------------------------------------------------#
+\ No newline at end of file
+diff --git a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/diffusion_config.pkl b/logs/pose_trajectory/cfm/H64_T100/20260403-1506/diffusion_config.pkl
+deleted file mode 100644
+index 64226eb..0000000
+Binary files a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/diffusion_config.pkl and /dev/null differ
+diff --git a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/events.out.tfevents.1775203620.fibo3.817493.0 b/logs/pose_trajectory/cfm/H64_T100/20260403-1506/events.out.tfevents.1775203620.fibo3.817493.0
+deleted file mode 100644
+index 895eb47..0000000
+Binary files a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/events.out.tfevents.1775203620.fibo3.817493.0 and /dev/null differ
+diff --git a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/model_config.pkl b/logs/pose_trajectory/cfm/H64_T100/20260403-1506/model_config.pkl
+deleted file mode 100644
+index d2ce33c..0000000
+Binary files a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/model_config.pkl and /dev/null differ
+diff --git a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/state_0.pt b/logs/pose_trajectory/cfm/H64_T100/20260403-1506/state_0.pt
+deleted file mode 100644
+index c258e5d..0000000
+Binary files a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/state_0.pt and /dev/null differ
+diff --git a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/state_12000.pt b/logs/pose_trajectory/cfm/H64_T100/20260403-1506/state_12000.pt
+deleted file mode 100644
+index 3531034..0000000
+Binary files a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/state_12000.pt and /dev/null differ
+diff --git a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/state_4000.pt b/logs/pose_trajectory/cfm/H64_T100/20260403-1506/state_4000.pt
+deleted file mode 100644
+index 5f30d1c..0000000
+Binary files a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/state_4000.pt and /dev/null differ
+diff --git a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/state_8000.pt b/logs/pose_trajectory/cfm/H64_T100/20260403-1506/state_8000.pt
+deleted file mode 100644
+index 872a3e4..0000000
+Binary files a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/state_8000.pt and /dev/null differ
+diff --git a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/trainer_config.pkl b/logs/pose_trajectory/cfm/H64_T100/20260403-1506/trainer_config.pkl
+deleted file mode 100644
+index f4b8085..0000000
+Binary files a/logs/pose_trajectory/cfm/H64_T100/20260403-1506/trainer_config.pkl and /dev/null differ
+diff --git a/scripts/command.txt b/scripts/command.txt
+index 207c8a3..3c7e5aa 100644
+--- a/scripts/command.txt
++++ b/scripts/command.txt
+@@ -3,6 +3,6 @@ cd /home/bubble/PhysicalAI_flowmatching
+ python scripts/train.py --config config.cfm_pose
+ 
+ # visualize on tensorboard 
+-tensorboard --logdir logs/pose_trajectory
++tensorboard --logdir logs/pose_trajectory_pnut
+ 
+ # 
+\ No newline at end of file
+diff --git a/scripts/train.py b/scripts/train.py
+index 61f39ff..e6c638a 100644
+--- a/scripts/train.py
++++ b/scripts/train.py
+@@ -31,17 +31,41 @@ def load_npz_to_dataframe(filename: str, include_targets: bool = True):
+     
+     return df
+ 
+-poseTraject_df = load_npz_to_dataframe("/home/bubble/PhysicalAI_flowmatching/data/pose_traject_dataset.npz")
++poseTraject_df = load_npz_to_dataframe("/home/bubble/PhysicalAI_flowmatching/data/pose_traject_dataset_pnut_2D.npz")
+ 
+ # 1. One-hot encode : This creates the 3D one-hot vector part = {Accel, Const, Decel} [2]
+ part_onehot = pd.get_dummies(poseTraject_df['part_enum'].astype(int), prefix='part').values
+ 
+-# 2. Assemble the final Context Vector C (9 scalars total) [2]
+-# C = [s_goal_x, s_goal_y, v_const, accel, part_0, part_1, part_2, q_init_x, q_init_y]
++# # 2. Assemble the final Context Vector C (11 scalars total) [2]
++# # C = [s_goal_x, s_goal_y, velocity_x_m_s,  v_const, accel, part_0, part_1, part_2, q_init_x, q_init_y]
++# C = np.concatenate([
++#     poseTraject_df[['s_goal_x', 's_goal_y', 'v_const', 'accel']].values,
++#     part_onehot,
++#     poseTraject_df[['q_init_x', 'q_init_y']].values
++# ], axis=1)
++
++# # 2. Assemble the final Context Vector C (11 scalars total) [2]
++# # C = [s_goal_x, s_goal_y, velocity_x_m_s, velocity_y_m_s, v_const, accel, part_0, part_1, part_2, q_init_x, q_init_y]
++# C = np.concatenate([
++#     poseTraject_df[['s_goal_x', 's_goal_y', 's_goal_z', 'q_init_z', 'v_const', 'accel']].values,
++#     # part_onehot,
++#     poseTraject_df[['q_init_x', 'q_init_y']].values
++# ], axis=1)
++
++# # 2. Assemble the final Context Vector C (11 scalars total) [2]
++# # C = [s_goal_x, s_goal_y, velocity_x_m_s, velocity_y_m_s, v_const, accel, part_0, part_1, part_2, q_init_x, q_init_y]
++# C = np.concatenate([
++#     poseTraject_df[['s_goal', 'qdot_init', 'v_const', 'accel']].values,
++#     part_onehot,
++#     poseTraject_df[['q_init']].values
++# ], axis=1)
++
++# 2. Assemble the final Context Vector C (11 scalars total) [2]
++# C = [s_goal_x, s_goal_y, velocity_x_m_s, velocity_y_m_s, v_const, accel, part_0, part_1, part_2, q_init_x, q_init_y]
+ C = np.concatenate([
+-    poseTraject_df[['s_goal_x', 's_goal_y', 'v_const', 'accel']].values,
+-    part_onehot,
+-    poseTraject_df[['q_init_x', 'q_init_y']].values
++    poseTraject_df[['s_goal_x', 's_goal_y','v_const', 'accel']].values,
++    # part_onehot,
++    poseTraject_df[['q_init_x', 'q_init_y', 'qdot_init_x', 'qdot_init_y']].values
+ ], axis=1)
+ 
+ # 3. Process the Action Vector A (2D trajectories) [1]
+@@ -51,14 +75,14 @@ targets_raw = np.stack(poseTraject_df['targets'].values)
+ A_2d = targets_raw[:, :, 0:2] # Shape: (batch_size, 50 steps, 2 variables)
+ 
+ # 4. Prepare PyTorch Tensors for Flow Matching
+-context_tensor = torch.tensor(C, dtype=torch.float32)  # (N, 9)
++context_tensor = torch.tensor(C, dtype=torch.float32)  # (N, 8)
+ 
+ # Pad trajectory from 50 to 64 steps (power of 2 required by UNet down/upsample)
+ HORIZON = 64
+ A_padded = np.pad(A_2d, ((0,0), (0, HORIZON - A_2d.shape[1]), (0,0)), mode='edge')
+ A_for_model = torch.tensor(A_padded, dtype=torch.float32)  # (N, 64, 2)
+ 
+-print(f"Context Vector C shape: {context_tensor.shape}")  # (N, 9)
++print(f"Context Vector C shape: {context_tensor.shape}")  # (N, 8)
+ print(f"Action Vector A shape: {A_for_model.shape}")       # (N, 64, 2)
+ 
+ #-----------------------------------------------------------------------------#
+@@ -71,7 +95,7 @@ class PoseTrajectoryDataset(Dataset):
+     """Wraps pose trajectory data for T-CFM training."""
+     def __init__(self, actions, contexts):
+         self.actions = actions    # (N, 50, 2)
+-        self.contexts = contexts  # (N, 9)
++        self.contexts = contexts  # (N, 8)
+         self.observation_dim = actions.shape[-1]  # 2
+         self.packed_dim = 0
+ 
+@@ -80,7 +104,7 @@ class PoseTrajectoryDataset(Dataset):
+ 
+     def __getitem__(self, idx):
+         action = self.actions[idx]       # (50, 2)
+-        context = self.contexts[idx]     # (9,)
++        context = self.contexts[idx]     # (8,)
+         cond = (np.array([]), np.array([]))
+         return action, context, cond
+ 
+@@ -110,9 +134,10 @@ train_idx, test_idx = indices[:split], indices[split:]
+ dataset = PoseTrajectoryDataset(A_for_model[train_idx], context_tensor[train_idx])
+ test_dataset = PoseTrajectoryDataset(A_for_model[test_idx], context_tensor[test_idx])
+ 
+-observation_dim = 2   # x, y pose
++observation_dim = 2   # x and y pose
+ action_dim = 0
+-context_dim = context_tensor.shape[1]  # 9
++context_dim = context_tensor.shape[1]  # 8
++print(f"Context size : {context_dim}")
+ 
+ print(f"Train: {len(dataset)}, Test: {len(test_dataset)}")
+ print(f"observation_dim={observation_dim}, context_dim={context_dim}")
+@@ -125,10 +150,10 @@ model_config = utils.Config(
+     args.model,
+     savepath=(args.savepath, 'model_config.pkl'),
+     horizon=HORIZON,                                # 64 (padded from 50, power of 2 for UNet)
+-    transition_dim=observation_dim + action_dim,   # 2 (x, y)
++    transition_dim=observation_dim + action_dim,   # 1 (x)
+     lstm_in_dim=None,                              # no sequential history encoder
+     lstm_out_dim=None,                             # no LSTM output
+-    global_cond_dim=context_dim,                   # 9 (context vector C)
++    global_cond_dim=context_dim,                   # 11 (context vector C)
+     cond_dim=observation_dim,
+     dim_mults=args.dim_mults,
+     device=args.device
+@@ -157,7 +182,7 @@ trainer_config = utils.Config(
+     savepath=(args.savepath, 'trainer_config.pkl'),
+     train_batch_size=args.batch_size,
+     train_lr=args.learning_rate,
+-    gradient_accumulate_every=args.gradient_accumulate_evP" ery,
++    gradient_accumulate_every=args.gradient_accumulate_every,
+     ema_decay=args.ema_decay,
+     sample_freq=0,  # disable rendering (no renderer for this dataset)
+     save_freq=args.save_freq,
