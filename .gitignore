@@ -15,6 +15,9 @@ secrets/
 # Local logs from comparison runs
 comparison_logs/
 
+# Intermediate training checkpoints (too large for GitHub — keep only final state_192000.pt per run)
+src/trajectory_publisher/scripts/logs/pose_trajectory_3D_multiinit/
+
 # Python build artifacts
 __pycache__/
 *.egg-info/

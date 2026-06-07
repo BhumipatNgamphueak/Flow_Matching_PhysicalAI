@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 
-from trajectory_publisher.dummy_module import dummy_function, dummy_var
+from llm_pack_interface.dummy_module import dummy_function, dummy_var
 import rclpy
 from rclpy.node import Node
 

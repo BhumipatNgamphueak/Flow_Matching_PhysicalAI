@@ -28,6 +28,36 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, TimerAction, GroupAction
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
+
+
+def _load_env_file(path):
+    """Load KEY=VALUE pairs from a .env file into os.environ if not already set.
+    Lets users keep secrets in .env without remembering to `source` it before launch."""
+    try:
+        with open(path, 'r') as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith('#'):
+                    continue
+                if '=' not in line:
+                    continue
+                key, _, val = line.partition('=')
+                key = key.strip()
+                val = val.strip().strip('"').strip("'")
+                # Don't override values already exported in the parent shell
+                if key and key not in os.environ:
+                    os.environ[key] = val
+    except FileNotFoundError:
+        pass
+
+
+# Auto-load .env at workspace root so the launch picks up GOOGLE_API_KEY
+# without the user having to `source .env` every time. realpath() follows
+# the install/ symlink back to the source tree.
+_WS_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', '..', '..')
+)
+_load_env_file(os.path.join(_WS_ROOT, '.env'))
 from launch_ros.actions import Node
 
 
@@ -44,6 +74,12 @@ def generate_launch_description():
                               description='Seconds to wait before moving'),
         DeclareLaunchArgument('use_llm',       default_value='true',
                               description='Launch the LLM planner node (requires GOOGLE_API_KEY)'),
+        DeclareLaunchArgument('use_plotter',   default_value='false',
+                              description='Launch the plotter node now. Default false — prompt.sh starts it on first prompt.'),
+        DeclareLaunchArgument('live_plot',     default_value='false',
+                              description='Open the matplotlib live-plot window. CSV recording is always on.'),
+        DeclareLaunchArgument('run_dir',       default_value='',
+                              description='Output directory for CSV recordings (empty → auto: ~/comparison_logs/run_<timestamp>)'),
 
         # trapezoid (fallback if no /traj_context)
         DeclareLaunchArgument('v_max',         default_value='2.0',
@@ -76,6 +112,8 @@ def generate_launch_description():
                               description='[pid] Linear velocity clamp (m/s) — match CFM training range [0.10, 0.20]'),
         DeclareLaunchArgument('w_max_pid',     default_value='3.0',
                               description='[pid] Angular velocity clamp (rad/s)'),
+        DeclareLaunchArgument('plan_once',     default_value='false',
+                              description='[pid] Plan CFM trajectory once on context receipt; disable 1 Hz replanning'),
     ]
 
     # ── turtlesim_plus simulator ──────────────────────────────────────────
@@ -112,10 +150,13 @@ def generate_launch_description():
             'kd_angular':     LaunchConfiguration('kd_angular'),
             'v_max_pid':      LaunchConfiguration('v_max_pid'),
             'w_max_pid':      LaunchConfiguration('w_max_pid'),
+            'plan_once':      LaunchConfiguration('plan_once'),
         }],
     )
 
     # ── real-time plotter ─────────────────────────────────────────────────
+    # Default: not launched here — prompt.sh starts it automatically on the
+    # first prompt so recording begins exactly when the experiment starts.
     plotter_node = Node(
         package='trajectory_publisher',
         executable='turtle_plotter.py',
@@ -123,7 +164,10 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'turtle_name': LaunchConfiguration('turtle_name'),
+            'live_plot':   LaunchConfiguration('live_plot'),
+            'run_dir':     LaunchConfiguration('run_dir'),
         }],
+        condition=IfCondition(LaunchConfiguration('use_plotter')),
     )
 
     # ── LLM planner node (Gemini via GOOGLE_API_KEY) ──────────────────────
@@ -139,7 +183,7 @@ def generate_launch_description():
         condition=IfCondition(LaunchConfiguration('use_llm')),
     )
 
-    # Delay controller + plotter so simulator's turtle1 topics are ready
+    # Delay controller + (optional) plotter so simulator's turtle1 topics are ready
     delayed_local_nodes = TimerAction(
         period=1.5,
         actions=[controller_node, plotter_node],

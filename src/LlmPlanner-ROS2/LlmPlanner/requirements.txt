@@ -1,0 +1,22 @@
+# Core LangChain and Agent orchestration
+langchain
+langgraph
+
+# LLM API Integrations
+langchain-google-genai
+langchain-openai
+
+# Or try the pinned set below (from a previous working revision) if the
+# latest versions break — uncomment and comment-out the four lines above.
+# langchain==0.3.27
+# langchain-community==0.3.30
+# langchain-core==0.3.76
+# langchain-google-genai==2.1.12
+# langchain-huggingface==0.3.1
+# langchain-openai==0.3.33
+# langchain-text-splitters==0.3.11
+# langgraph==0.6.8
+# langgraph-checkpoint==2.1.1
+# langgraph-prebuilt==0.6.4
+# langgraph-sdk==0.2.9
+# langsmith==0.4.31

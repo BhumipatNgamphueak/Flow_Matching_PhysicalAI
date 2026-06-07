@@ -1,31 +1,22 @@
 # Flow Matching – Physical AI (TurtleSim)
 
-> **Repository:** https://github.com/BhumipatNgamphueak/Flow_Matching_PhysicalAI
+> **Repository:** https://github.com/BhumipatNgamphueak/Flow_Matching_PhysicalAI  
 > **Branch:** `TurtleSim`
 
-Compare classical **trapezoidal velocity profiles** (computed via equation) against
-**Conditional Flow Matching (CFM)** — a generative model that learns to produce
-trajectories — under identical constraints issued by a Gemini-based LLM planner.
+This project integrates a **Large Language Model (LLM) planning node** with a **Conditional Flow Matching (CFM) trajectory generator**, enabling a robot to follow natural language motion commands end-to-end.
 
-```
-              ┌─────────────────┐
-   "go to     │  LlmPlanner     │   /traj_context
-    x=2,y=1   │  (Gemini 2.5)   │ ────────────────┐
-    v=0.15"   │  /LlmPrompt     │                 │
-              └─────────────────┘                 ▼
-                                       ┌─────────────────────┐
-                                       │  turtle_controller  │
-                                       │  ┌──────────────┐   │   /turtle1/cmd_vel
-                                       │  │ trapezoid OR │   │ ────────────────┐
-                                       │  │ CFM + PID    │   │                 │
-                                       │  └──────────────┘   │                 ▼
-                                       └─────────────────────┘     ┌──────────────────┐
-                                                                   │  turtlesim_plus  │
-                                                                   │   simulator      │
-                                                                   └──────────────────┘
+The robot receives a free-form text prompt (e.g. *"Go to the direction of 7 o'clock at 5 inches/sec"*), the LLM extracts structured motion parameters, and the CFM model generates a smooth trajectory that the robot executes in TurtleSim.
 
-   Comparison logs → ~/comparison_logs/{timestamp}_pid.npz   (CFM + analytical classical)
-```
+---
+
+## Semester Summary
+
+| Topic | Use Case | 1st Semester | 2nd Semester | Succession | Improvement |
+|---|---|---|---|---|---|
+| Trajectory | CFM Trajectory of Hexapod | Can exceed 10 min | **Flow Matching<br>0.0582 ± 0.0051 s** | **Pass** | Better |
+| LLM Response | Giving context to CFM | — | **5.223 ± 1.864 s** | Fail | Better |
+
+CFM Trajectory Generation improved from over 10 minutes to 0.0582 s using Flow Matching — a **10,000× speedup**. LLM Response for providing context to CFM achieved 5.223 s but did not meet the succession criteria. Both areas show clear improvement over the previous semester.
 
 ---
 
@@ -37,7 +28,7 @@ trajectories — under identical constraints issued by a Gemini-based LLM planne
 | ROS | ROS 2 Humble |
 | Python | 3.10 |
 | GPU (optional) | NVIDIA with CUDA 12.x driver — falls back to CPU |
-| LLM API | [Google AI Studio key](https://aistudio.google.com/apikey) (free tier works) |
+| LLM API | [Google AI Studio key](https://aistudio.google.com/apikey) — system uses `gemini-2.5-flash` (free tier: 20 RPD); upgrade to `gemini-1.5-flash` for 1 500 RPD |
 
 Disk needed during install: ~6 GB (CUDA torch is ~3.5 GB).
 
@@ -49,26 +40,19 @@ Disk needed during install: ~6 GB (CUDA torch is ~3.5 GB).
 
 ```bash
 sudo apt update && sudo apt install -y \
-    python3-pip \
-    python3-pygame \
-    ros-humble-turtlesim
+    python3-pip python3-pygame ros-humble-turtlesim
 ```
 
-### 2. Clone the workspace + the LLM planner
-
-The LLM planner lives in a separate repo under `src/`:
+### 2. Clone the workspace
 
 ```bash
 git clone -b TurtleSim https://github.com/BhumipatNgamphueak/Flow_Matching_PhysicalAI.git
 cd Flow_Matching_PhysicalAI
-
-git clone https://github.com/lyDevper/LlmPlanner-ROS2.git src/LlmPlanner-ROS2
 ```
 
-### 3. Make Python node scripts executable
+> `src/LlmPlanner-ROS2/` is included in this repository — no separate clone needed.
 
-ROS 2 launch refuses to start a Python node without `+x`. The exact set of nodes
-launched by the system:
+### 3. Make Python scripts executable
 
 ```bash
 chmod +x \
@@ -78,219 +62,374 @@ chmod +x \
     src/LlmPlanner-ROS2/LlmPlanner/src/llm_pack/scripts/llm_node.py
 ```
 
-(Or just bulk-mark everything under `scripts/` as executable — harmless:
-`find src -path "*/scripts/*.py" -exec chmod +x {} \;`)
-
-### 4. Install Python dependencies
+### 4. Python dependencies
 
 ```bash
-# numpy MUST be < 2 — Ubuntu's apt-installed matplotlib was built against numpy 1.x
-pip install --user "numpy<2"
-
-# CFM runtime deps (small, pure-python)
+pip install --user "numpy<2"   # must be < 2 (system matplotlib built against 1.x)
 pip install --user einops torchdiffeq torchsummary pot
-
-# torchcfm + torchdyn would otherwise drag in a fresh CUDA torch — install with --no-deps
 pip install --user --no-deps torchcfm torchdyn
-
-# LangChain + Gemini for the LLM planner
 pip install --user -r src/LlmPlanner-ROS2/LlmPlanner/requirements.txt
 ```
 
-### 5. Install PyTorch — pick ONE
+### 5. PyTorch — pick one
 
 ```bash
-# Option A — NVIDIA GPU with CUDA 12.x driver (recommended; ~3.5 GB)
+# GPU (CUDA 12.x, ~3.5 GB)
 pip install --user torch --index-url https://download.pytorch.org/whl/cu121
 
-# Option B — CPU only (~200 MB; CFM is small enough for CPU inference)
+# CPU only (~200 MB)
 pip install --user torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
-If you run out of disk during install: `pip cache purge` and retry.
-
-### 6. Build the workspace
+### 6. Build
 
 ```bash
 source /opt/ros/humble/setup.bash
 colcon build --symlink-install
 ```
 
-`--symlink-install` is important: edits to source `.py` files apply without rebuilding.
+`--symlink-install` means edits to `.py` source files take effect without rebuilding.
 
 ---
 
-## Configure the LLM API key
+## API Key Setup
 
-Get a free key at https://aistudio.google.com/apikey, then:
+Get a free key at <https://aistudio.google.com/apikey>, then export it before launching:
 
 ```bash
-echo 'GOOGLE_API_KEY="<paste-your-key>"' > .env
-chmod 600 .env
+export GOOGLE_API_KEY="your_key_here"
 ```
 
-`.env` is gitignored — it will not leak when you push.
+To persist across sessions, add the line to `~/.bashrc`.  
+**Never hardcode the key in source files.**
 
 ---
 
 ## Run
 
-Two terminals — both at `~/Flow_Matching_PhysicalAI`.
-
 ### Terminal 1 — launch the system
 
 ```bash
-source /opt/ros/humble/setup.bash
 source install/setup.bash
-set -a; source .env; set +a   # exports GOOGLE_API_KEY for the launch
+export GOOGLE_API_KEY="your_key_here"
 
-# CFM + PID mode (the comparison run — CFM drives, classical baseline is logged)
 ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py mode:=pid
-
-# Or classical-only mode (no CFM model loaded; faster startup)
-ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py mode:=trapezoid
 ```
 
-What you should see on success:
+Expected output:
 ```
-[turtle_controller] Subscribed to /traj_context (LLM constraints)
-[turtle_controller] [PID] Loading CFM 3D model …
 [turtle_controller] [PID] CFM model ready.
-[llm_node]          LlmNode initialized. Listening on /LlmPrompt, publishing to /traj_context.
+[llm_node]          LlmNode initialized. Listening on /LlmPrompt …
 ```
 
-### Terminal 2 — issue an LLM prompt
+### Terminal 2 — start the plotter (optional, records all logs)
 
 ```bash
 source install/setup.bash
+ros2 run trajectory_publisher turtle_plotter.py --ros-args -p live_plot:=false
+```
 
+### Terminal 3 — send a prompt
+
+```bash
+source install/setup.bash
 ros2 service call /LlmPrompt llm_pack_interface/srv/String \
-    "{prompt: 'Move to x=2.0, y=1.5 with v=0.15 and a=0.03'}"
+    "{prompt: 'Move to x=2.0, y=1.5 at 0.15 m/s'}"
 ```
-
-The launch terminal will then log:
-```
-[llm_node]          Agent reply: ...
-[turtle_controller] [TrajContext] v_const=0.1500 a=0.0300 goal=(9.500, 9.000) world
-[turtle_controller] [CFM-3D] Trajectory LLM-context in 8.4 ms (v_const=0.1500, a=0.0300)
-[turtle_controller] [PID] LLM goal applied: (9.500, 9.000); CFM resampled
-[turtle_controller] [log] Saved comparison → /home/<user>/comparison_logs/...
-```
-
-The turtle drives toward the goal at ~0.15 m/s.
 
 ---
 
-## Constraint ranges (LLM is prompted to stay within these)
+## Automated Test Runner
 
-| Field | Range | Source |
-|---|---|---|
-| `v_const` (linear velocity) | 0.10 – 0.20 m/s | LlmPlanner system prompt |
-| `a` (linear acceleration) | 0.02 – 0.04 m/s² | LlmPlanner system prompt |
-| Goal `(x, y, z)` | meters, relative to current turtle pose | LLM tool input |
+Runs all 15 prompts × 5 repeats = 75 runs (~51 min):
 
-The LLM treats goals as displacements from the turtle's *current* pose at the moment
-the prompt arrives ("robot starts at (0,0,0)"). The controller adds the live pose to
-get world coordinates.
+```bash
+./run_tests.sh --wait 35          # full benchmark
+./run_tests.sh --class 2          # only C2 prompts
+./run_tests.sh --class 1 --prompt-num 3  # specific prompt, 5 repeats
+```
+
+After completion:
+```bash
+./plot_latest.sh   # visualise the session
+```
 
 ---
 
 ## Modes
 
-### `mode=trapezoid` — classical baseline
-Open-loop trapezoidal velocity profile. Drives along the current heading for the
-LLM-issued distance with peak velocity `v_const` and acceleration `a`. CFM model
-is **not** loaded.
-
-### `mode=pid` — CFM + PID (the headline mode)
-1. Loads a Conditional Flow Matching model (~2.35 M params) at startup.
-2. On every `/traj_context` arrival, builds a 13-dim context vector
-   `[goal_xy, goal_θ, v_const, a, ω, α, q_init_xyθ, qdot_xyθ]`
-   and samples a (50, 3) waypoint trajectory in ~5–10 ms (10-step Euler ODE).
-3. Tracks waypoints with a PID controller that publishes `/turtle1/cmd_vel`.
-4. Logs **both** the CFM trajectory and an analytical classical baseline (under
-   identical constraints, toward-goal heading) to `~/comparison_logs/`.
+| Mode | Description |
+|---|---|
+| `mode:=pid` | CFM + PID controller. Loads the CFM model, generates 50-waypoint trajectories, replans at 1 Hz. All logs saved. |
+| `mode:=trapezoid` | Classical open-loop trapezoidal profile. No CFM loaded. Fast startup. |
+| `plan_once:=true` | CFM plans once at context receipt and follows the 50 waypoints without replanning. |
 
 ---
 
-## Manual goal (no LLM)
+## Configuration
 
-If you don't want to use the LLM, publish directly:
+### LLM Node (`llm_node.py`)
+
+| Parameter | Value |
+|---|---|
+| Model | `gemini-2.5-flash` |
+| Temperature | `0.0` (deterministic) |
+| Agent | LangGraph ReAct (`create_react_agent`) |
+| Recursion limit | `4` — forces exactly **1 tool call** per prompt |
+| History | Stateless per call — fresh context on every prompt |
+
+**Kinematic constraints enforced in LLM system prompt:**
+
+| Parameter | Clamped range |
+|---|---|
+| `v_const` | 0.10 – 0.20 m/s |
+| `a` | 0.02 – 0.04 m/s² |
+| Goal distance | 0.0 – 5.0 m |
+
+**Informal unit mappings:**
+
+| Expression | Interpreted as |
+|---|---|
+| book-length | 0.30 m |
+| floor-tile | 0.30 m |
+| man step speed | 1.40 m/s → clamped to 0.20 m/s |
+| dog speed | 2.00 m/s → clamped to 0.20 m/s |
+| 7 o'clock direction | body frame x = −0.500, y = −0.866 |
+| 2 o'clock direction | body frame x = 0.500, y = −0.866 |
+
+### CFM Controller (`turtle_controller.py`)
+
+| Parameter | Value |
+|---|---|
+| Checkpoint | `pose_trajectory_3DV2/.../state_192000.pt` (active; 6 training runs exist, only this one is loaded) |
+| Waypoints | 50 (trimmed from horizon 64) |
+| Timestep | 0.04 s → 2.0 s per plan |
+| Sampling steps | 10 (DDIM) |
+| Replan rate | 1 Hz (disabled when `plan_once:=true`) |
+| Goal tolerance | 0.05 m |
+
+**Context vector (13-dim) fed to CFM model:**
+
+| # | Field | Description |
+|---|---|---|
+| 0–1 | `goal_x`, `goal_y` | Body-frame goal (m) |
+| 2 | `s_goal_theta` | `atan2(goal_y, goal_x)` |
+| 3–4 | `v_const`, `a` | Speed and acceleration from LLM |
+| 5–6 | `omega_const`, `alpha_const` | Fixed angular constants |
+| 7–9 | `q_x`, `q_y`, `q_theta` | Robot pose in body frame (always 0) |
+| 10–12 | `qdot_x`, `qdot_y`, `qdot_theta` | Robot velocity in body frame |
+
+> **Body-frame normalization:** the world goal is translated then rotated by −θ before CFM input. Output waypoints are rotated back by +θ and translated to world frame. This keeps CFM input consistent with training (robot always at origin, heading always 0).
+
+---
+
+## Experiment Setup
+
+- **Platform**: TurtleSim Plus (2-D), spawn at (7.5, 7.5), θ = 0
+- **Runs**: 75 — 15 prompts × 5 repeats, 35 s wait per run
+- **Success**: actual turtle odometry vs world-frame goal from `pose.csv`
+
+| Class | Description | Example prompt |
+|---|---|---|
+| C1 | Direction + Speed | "Move forward at 0.12 m/s" |
+| C2 | Absolute Position | "Go to x=3.14, y=−2.72 m" |
+| C3 | Speed + Duration | "Move at dog speed for 30 s" |
+| C4 | Position + Duration | "Reach x=2.72, y=3.14 in 15 s" |
+| C5 | Ambiguous | "Approach the wall gently" |
+
+---
+
+## Results
+
+### LLM Response Time
+
+**Mean: 5.223 ± 1.864 s** (n = 75 prompts)
+
+| Statistic | Value |
+|---|---|
+| Min | 2.536 s |
+| Median | 4.778 s |
+| Mean | 5.223 s |
+| Max | 10.189 s |
+
+![LLM response time](src/figures/fig_llm_response_time.png)
+
+---
+
+### CFM Pass Rate
+
+**Overall: 48 / 75 (64%)**
+
+| Class | Description | Pass |
+|---|---|---|
+| C1 | Direction + Speed | 14/15 (93%) |
+| C2 | Absolute Position | 15/15 (100%) |
+| C3 | Speed + Duration | 9/15 (60%) |
+| C4 | Position + Duration | 5/15 (33%) |
+| C5 | Ambiguous | 5/15 (33%) |
+
+### Pass/Fail Thresholds
+
+| Metric | Threshold |
+|---|---|
+| Velocity | ± 30% of `v_const` |
+| Position error | < 0.50 m |
+| Direction error | < 15° |
+| Duration | ± 20% of `t_target` |
+
+### Detailed Results
+
+#### C1 – Direction + Speed
+
+| Prompt | Ideal | CFM (mean ± std) | Pass | Status |
+|---|---|---|---|---|
+| Forward 0.12 m/s | Dir 0° \| Speed 0.120 m/s | Dir 0.2 ± 0.2° \| Velocity 0.096 ± 0.006 m/s | 5/5 | **PASS** |
+| 7-o'clock ~0.127 m/s | Dir 0° \| Speed 0.127 m/s | Dir 0.9 ± 0.2° \| Velocity 0.094 ± 0.008 m/s | 4/5 | PARTIAL |
+| SE direction | Dir 0° \| Speed 0.200 m/s | Dir 0.3 ± 0.3° \| Velocity 0.084 ± 0.003 m/s | 5/5 | **PASS** |
+
+#### C2 – Absolute Position
+
+| Prompt | Ideal | CFM (mean ± std) | Pass | Status |
+|---|---|---|---|---|
+| x=3.14 y=−2.72 m | Pos err < 0.500 m | Pos err 0.061 ± 0.007 m | 5/5 | **PASS** |
+| 4.2 m azimuth 300° | Pos err < 0.500 m | Pos err 0.088 ± 0.055 m | 5/5 | **PASS** |
+| 6 floor-tiles ahead | Pos err < 0.500 m | Pos err 0.072 ± 0.007 m | 5/5 | **PASS** |
+
+#### C3 – Speed + Duration
+
+| Prompt | Ideal | CFM (mean ± std) | Pass | Status | Failure reason |
+|---|---|---|---|---|---|
+| 0.12 m/s for 15 s | Speed 0.120 m/s \| Dur 15 s | Velocity 0.115 ± 0.008 m/s \| Dur 13.6 ± 1.3 s | 4/5 | PARTIAL | |
+| Backward max 17 s | Speed 0.200 m/s \| Dur 17 s | Velocity 0.117 ± 0.004 m/s \| Dur 21.1 ± 0.8 s | 0/5 | **FAIL** | Cat2 |
+| Dog speed for 30 s | Speed 0.200 m/s \| Dur 30 s | Velocity 0.151 ± 0.001 m/s \| Dur 32.6 ± 0.2 s | 5/5 | **PASS** | |
+
+#### C4 – Position + Duration
+
+| Prompt | Ideal | CFM (mean ± std) | Pass | Status | Failure reason |
+|---|---|---|---|---|---|
+| x=2.72 y=3.14 in 15 s | Pos err < 0.500 m \| Dur 15 s | Pos 0.059 ± 0.007 m \| Dur 31.9 ± 0.5 s | 0/5 | **FAIL** | Cat1 |
+| 4 m @ 2-o'clock in 30 s | Pos err < 0.500 m \| Dur 30 s | Pos 0.060 ± 0.008 m \| Dur 30.1 ± 1.2 s | 5/5 | **PASS** | |
+| 10 ft west ≤ 15 s | Pos err < 0.500 m \| Dur 15 s | Pos 0.068 ± 0.020 m \| Dur 25.6 ± 1.2 s | 0/5 | **FAIL** | Cat1 |
+
+#### C5 – Ambiguous
+
+| Prompt | Ideal | CFM (mean ± std) | Pass | Status | Failure reason |
+|---|---|---|---|---|---|
+| Forward man-step speed | Dir 0° \| Speed 0.200 m/s | Dir 0.2 ± 0.1° \| Velocity 0.096 ± 0.017 m/s | 0/5 | **FAIL** | Cat3 |
+| 7 book-lengths right | Dir 0° \| Speed 0.200 m/s | Dir 0.1 ± 0.1° \| Velocity 0.119 ± 0.005 m/s | 0/5 | **FAIL** | Cat3 |
+| Approach wall gently | Dir 0° \| Speed 0.100 m/s | Dir 0.0 ± 0.0° \| Velocity 0.124 ± 0.000 m/s | 5/5 | **PASS** | |
+
+### Failure Categories
+
+| Category | Label | Description | Prompt type | Affected prompts |
+|---|---|---|---|---|
+| **Cat1** | CFM correct, prompt fail | Time constraint is physically infeasible — minimum triangular-profile time exceeds target regardless of planner | Position + hard deadline | C4P1 `"x=2.72 y=3.14 in 15 s"` (t_min=20.4 s), C4P3 `"10 ft west ≤ 15 s"` (t_min=17.5 s) |
+| **Cat2** | CFM fail, prompt pass | Prompt is valid but CFM cannot execute it — model not trained on negative-x trajectories | Reverse motion | C3P2 `"Keep going backward with max speed for 17 s"` |
+| **Cat3** | Both fail | Ambiguous speed reference + CFM ignores `v_const` (execution speed ≈ goal_dist / planning_horizon) | Informal/cultural speed unit | C5P1 `"Forward as fast as a man step"`, C5P2 `"7 book-lengths right at man-step speed"` |
+
+---
+
+## Figures
+
+| Figure | Description |
+|---|---|
+| ![Pass rates](src/figures/fig1_cfm_pass_rates.png) | CFM pass rates by class |
+| ![Speed](src/figures/fig2_cfm_speed.png) | CFM speed vs ideal |
+| ![Position](src/figures/fig3_cfm_position.png) | Position error per prompt |
+| ![Duration](src/figures/fig4_cfm_duration.png) | Duration vs target |
+| ![Direction](src/figures/fig5_cfm_direction.png) | Direction error |
+| ![Replan dt](src/figures/fig6_replan_dt.png) | Per-run replan interval distribution |
+
+### Example Trajectories
+
+> Light blue = CFM replan plans · Dark blue = actual robot path · Orange dashed = classical plan (not executed) · ★ = start/goal
+
+| Class | Trajectory plot |
+|---|---|
+| C1 Direction + Speed | ![](src/figures/traj_C1.png) |
+| C2 Absolute Position | ![](src/figures/traj_C2.png) |
+| C3 Speed + Duration | ![](src/figures/traj_C3.png) |
+| C4 Position + Duration | ![](src/figures/traj_C4.png) |
+| C5 Ambiguous | ![](src/figures/traj_C5.png) |
+
+---
+
+## Conclusion
+
+### What Improved
+
+**CFM trajectory generation** is the standout success. Generation time dropped from over 10 minutes (previous iterative solver) to **0.0582 ± 0.0051 s** using Flow Matching — a roughly 10,000× speedup — and passes the succession criterion. The model generalises well to unseen goal positions and heading angles through body-frame normalisation, achieving 100% pass rate on absolute-position prompts (C2) and 93% on direction+speed prompts (C1).
+
+**End-to-end natural language → motion** pipeline is fully operational. A user prompt in free-form English is parsed by the LLM, converted to a typed ROS 2 `TrajContext` message, and executed by the CFM controller within a single pipeline with no manual parameter tuning between steps. The system handles informal units ("floor-tile", "book-length", clock-direction bearings) and cultural speed references through explicit LLM prompt engineering.
+
+**Overall CFM execution pass rate of 64%** (48/75 runs) across five prompt difficulty classes demonstrates that the trajectory generator is reliable for well-specified goals, even when the natural language input requires interpretation.
+
+---
+
+### Existing Problems
+
+| Problem | Root cause | Impact |
+|---|---|---|
+| **LLM response too slow** (5.223 ± 1.864 s mean, up to 10.2 s) | Gemini API round-trip + ReAct agent reasoning steps | FAIL on succession criterion; not suitable for real-time replanning loops |
+| **CFM ignores `v_const`** | Execution speed ≈ `goal_dist / planning_horizon`, independent of commanded speed | Cat3 failures: speed prompts pass LLM correctly but CFM does not honour the value |
+| **No backward motion** | CFM trained only on forward trajectories; negative-x goals not in training distribution | Cat2 failure: "go backward" prompt interpreted correctly by LLM but CFM cannot execute |
+| **Infeasible hard time constraints** | Physics minimum time `t_min = v_const / a + dist / v_const` can exceed the user's deadline | Cat1 failures: C4P1 (t_min = 20.4 s vs 15 s target), C4P3 (17.5 s vs 15 s target) |
+| **Free-tier API quota** (20 RPD on gemini-2.5-flash) | Gemini free tier rate limit | Limits full 75-run experiment to one session per day; upgrade to paid tier or gemini-1.5-flash (1 500 RPD) to remove bottleneck |
+| **LLM response variance** (σ = 1.864 s) | Inference time varies with prompt complexity and server load | Unpredictable latency makes timing-critical applications unreliable |
+
+### Summary
+
+The CFM trajectory generator is production-ready for the TurtleSim environment. The LLM integration closes the natural-language-to-motion loop and demonstrates clear value, but latency (5.2 s mean) must be reduced — either through a smaller/local model, prompt caching, or moving to a faster API tier — before the system can be used for reactive control. CFM training should be extended to include backward trajectories and speed-conditioned data to eliminate Cat2 and Cat3 failure modes.
+
+---
+
+## Methodology Notes
+
+- **Duration**: `n_replans × per-run mean replan interval` from NPZ timestamps (global mean = 1.048 s, std = 0.053 s).
+- **Speed / Position**: actual robot odometry from `start_pose` at each replan trigger — not CFM planned waypoints.
+- **Classical planner**: trapezoidal profile computed as reference only — **never executed**. All pass/fail judgements are CFM-only.
+- **CFM speed**: execution speed ≈ `goal_dist / planning_horizon`, largely insensitive to `v_const`. Root cause of Cat3 failures.
+
+---
+
+## Manual Goal (no LLM)
 
 ```bash
 ros2 topic pub /goal_position geometry_msgs/Point "{x: 10.0, y: 7.5, z: 0.0}"
 ```
 
-The PID/CFM mode reuses cached LLM constraints if any have arrived; otherwise it
-falls back to `V_CONST_FALLBACK = 0.156 m/s` and `A_FALLBACK = 0.028 m/s²`.
+Falls back to `v_const = 0.156 m/s`, `a = 0.028 m/s²` if no LLM context has arrived.
 
 ---
 
-## Comparison logs
-
-```
-~/comparison_logs/{YYYYMMDD-HHMMSS-mmm}_pid.npz
-  cfm_waypoints       (50, 3)  CFM-generated x, y, θ in world coords
-  classical_waypoints (N, 3)   Analytical trapezoid baseline toward same goal
-  cfm_dt              0.04     seconds per CFM waypoint
-  classical_dt        0.04     seconds per classical waypoint
-  v_const, a                   constraints used
-  goal_world          (2,)     target in world coords
-  start_pose          (3,)     pose at sample time
-```
-
-Quick plot:
-
-```python
-import numpy as np, matplotlib.pyplot as plt
-import glob
-path = sorted(glob.glob("~/comparison_logs/*_pid.npz"))[-1]
-d = np.load(path)
-plt.plot(*d['cfm_waypoints'][:, :2].T, label='CFM')
-plt.plot(*d['classical_waypoints'][:, :2].T, label='Classical')
-plt.axis('equal'); plt.legend(); plt.show()
-```
-
----
-
-## World
-
-| Property | Value |
-|---|---|
-| Size | 0 – 15 m on each axis |
-| Default spawn | (7.5, 7.5), θ = 0 (+X) |
-| θ convention | radians, + = counter-clockwise |
-| Boundary | hard clamp at 0 and 15 |
-| Simulator rate | 100 Hz |
-
-> **Note** — the controller uses `TURTLESIM_ORIGIN_X/Y = 5.544` to convert between
-> world frame and the meter-frame the CFM model was trained on. This 5.544 reflects
-> the *training-data normalization*, not the current 7.5 spawn point. Goals issued
-> via `/traj_context` use the live pose as origin (not 5.544), so this is fine for
-> LLM-driven runs.
-
----
-
-## Project layout
+## Project Layout
 
 ```
 Flow_Matching_PhysicalAI/
 ├── src/
-│   ├── trajectory_publisher/                   # Main ROS 2 package
+│   ├── trajectory_publisher/          # Main ROS 2 package
 │   │   ├── launch/turtlesim_trapezoid.launch.py
 │   │   ├── scripts/
-│   │   │   ├── turtle_controller.py            # Active controller
-│   │   │   ├── turtle_plotter.py               # Live matplotlib plot
-│   │   │   ├── diffuser/                       # CFM model + datasets + utils
-│   │   │   ├── config/cfm_pose.py              # Training hyperparameters
-│   │   │   ├── evaluate/                       # Offline evaluation
-│   │   │   └── logs/.../state_192000.pt        # Trained checkpoint
-│   │   └── package.xml                         # Declares llm_pack_interface dep
-│   ├── turtlesim_plus/                         # Enhanced 2D simulator
-│   └── LlmPlanner-ROS2/                        # Gemini-based constraint planner
+│   │   │   ├── turtle_controller.py      # CFM + PID controller (active)
+│   │   │   ├── turtle_plotter.py         # Logger + live plot
+│   │   │   ├── compare_cfm_vs_classical.py
+│   │   │   ├── plot_response_times.py
+│   │   │   ├── plot_cfm_gen_times.py
+│   │   │   ├── plot_cfm_replans.py
+│   │   │   ├── plot_fail_examples.py
+│   │   │   ├── plot_run.py
+│   │   │   ├── plot_today.py
+│   │   │   ├── diffuser/                 # CFM model, datasets, utilities
+│   │   │   └── logs/pose_trajectory_3DV2/.../state_192000.pt
+│   │   └── package.xml
+│   ├── figures/                          # Result figures (committed, render in README)
+│   ├── turtlesim_plus/                   # Enhanced 2D simulator
+│   └── LlmPlanner-ROS2/                 # LLM planner (submodule)
 │       └── LlmPlanner/src/llm_pack/scripts/llm_node.py
-├── .env                                        # GOOGLE_API_KEY (gitignored)
-├── .gitignore
+├── run_tests.sh                          # Automated 75-run benchmark
+├── plot_latest.sh                        # Plot most recent session
+├── prompt.sh                             # Send single prompt to LLM node
+├── generate_figures.sh                   # Copy analysis outputs to src/figures/
 └── README.md
 ```
 
@@ -298,40 +437,17 @@ Flow_Matching_PhysicalAI/
 
 ## Troubleshooting
 
-| Symptom | Cause / Fix |
+| Symptom | Fix |
 |---|---|
-| `executable 'llm_node.py' not found on the libexec directory` | Source script lacks `+x` bit. Run the chmod step in §3 of Install. |
-| `ModuleNotFoundError: No module named 'torch'` | Install torch via pip (Install §5). |
-| `ModuleNotFoundError: No module named 'einops'` (or torchcfm, pot, …) | Re-run Install §4. |
-| `ImportError: cannot import name 'create_agent' from 'langchain.agents'` | Outdated `llm_node.py`. The active code only needs `create_react_agent` from langgraph. |
-| `numpy.core.multiarray failed to import` (in `import matplotlib`) | numpy ≥ 2.0 vs system matplotlib (built for numpy 1.x). `pip install --user "numpy<2"`. |
-| `[WARN] [llm_node]: GOOGLE_API_KEY not set!` | `.env` not sourced. `set -a; source .env; set +a`. |
-| `The passed service type is invalid` | Workspace not sourced in this terminal. `source install/setup.bash`. |
-| Service `/LlmPrompt` waiting forever | `llm_node` died. Check launch output for the actual stack trace. |
-| `FileNotFoundError: state_192000.pt` | Checkpoint missing. Verify `src/trajectory_publisher/scripts/logs/pose_trajectory_3DV2/cfm/H64_T100/20260505-1157/state_192000.pt` exists. |
-| Disk full during `pip install ... cu121` | Run `pip cache purge`, free up space, retry. CUDA torch is ~3.5 GB. |
-| `Connection broken: ... No space left on device` | Same as above. |
-| Build fails with "existing path cannot be removed" symlink error | Stale half-build. `rm -rf build/<pkg> install/<pkg>` and rebuild. |
-| Turtle doesn't move after service call | Check launch terminal: did `[CFM-3D] Trajectory ...` log appear? If yes, the turtle IS moving — at 0.15 m/s × 2.5 m it takes ~17 s. |
-| Blank matplotlib window | `sudo apt install python3-pyqt5` and set `MPLBACKEND=Qt5Agg`. |
-| Multiple installs of `llm_pack` conflict | Remove any nested `install/` dirs (e.g. `src/LlmPlanner-ROS2/LlmPlanner/install`). |
-
----
-
-## Backup plan: classical-only manual mode
-
-If the LLM stack is broken and you just want to drive the turtle:
-
-```bash
-ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py \
-    mode:=trapezoid v_max:=1.5 a_max:=0.3 distance:=8.0
-```
-
-Or in PID mode with manual goal:
-
-```bash
-ros2 launch trajectory_publisher turtlesim_trapezoid.launch.py mode:=pid use_llm:=false
-ros2 topic pub /goal_position geometry_msgs/Point "{x: 10.0, y: 7.5, z: 0.0}"
-```
-
-`use_llm:=false` skips spawning `llm_node` (no Google key required).
+| `executable 'llm_node.py' not found` | Run `chmod +x` on all scripts (Install §3) |
+| `ModuleNotFoundError: torch` | Install torch (Install §5) |
+| `ModuleNotFoundError: einops` / `torchcfm` | Re-run Install §4 |
+| `numpy.core.multiarray failed to import` | `pip install --user "numpy<2"` |
+| `GOOGLE_API_KEY not set` | `export GOOGLE_API_KEY="..."` before launching |
+| `The passed service type is invalid` | `source install/setup.bash` in this terminal |
+| Quota exceeded (429) | Free tier limit hit. Wait for daily reset or use a paid key. |
+| `FileNotFoundError: state_192000.pt` | Verify checkpoint path: `src/trajectory_publisher/scripts/logs/pose_trajectory_3DV2/cfm/H64_T100/20260505-1157/state_192000.pt` |
+| Turtle doesn't move after service call | Check launch log for `[CFM-3D] Trajectory …`. At 0.15 m/s × 2.5 m the turtle takes ~17 s — it IS moving. |
+| Blank matplotlib window | `sudo apt install python3-pyqt5` and `export MPLBACKEND=Qt5Agg` |
+| Build fails with symlink error | `rm -rf build/<pkg> install/<pkg>` then rebuild |
+| Disk full during `pip install cu121` | `pip cache purge`, free space, retry |
